@@ -38,6 +38,7 @@
 #include "util.h"
 #include "csum.h"
 #include "conntrack.h"
+#include "ofproto/ofproto-dpif.h"
 #include "openvswitch/vlog.h"
 
 VLOG_DEFINE_THIS_MODULE(odp_execute);
@@ -56,6 +57,34 @@ COVERAGE_DEFINE(drop_action_invalid_tunnel_metadata);
 COVERAGE_DEFINE(drop_action_unsupported_packet_type);
 COVERAGE_DEFINE(drop_action_congestion);
 COVERAGE_DEFINE(drop_action_forwarding_disabled);
+
+struct ofport_stub {
+    struct hmap_node odp_port_node; /* In dpif_backer's "odp_to_ofport_map". */
+    struct ofport up;
+
+    odp_port_t odp_port;
+    struct ofbundle *bundle;    /* Bundle that contains this port, if any. */
+    struct ovs_list bundle_node;/* In struct ofbundle's "ports" list. */
+    struct cfm *cfm;            /* Connectivity Fault Management, if any. */
+    struct bfd *bfd;            /* BFD, if any. */
+    struct lldp *lldp;          /* lldp, if any. */
+    bool is_tunnel;             /* This port is a tunnel. */
+    long long int carrier_seq;  /* Carrier status changes. */
+    struct ofport_dpif *peer;   /* Peer if patch port. */
+
+    /* Spanning tree. */
+    struct stp_port *stp_port;  /* Spanning Tree Protocol, if any. */
+    enum stp_state stp_state;   /* Always STP_DISABLED if STP not in use. */
+    long long int stp_state_entered;
+
+    /* Rapid Spanning Tree. */
+    struct rstp_port *rstp_port; /* Rapid Spanning Tree Protocol, if any. */
+    enum rstp_state rstp_state; /* Always RSTP_DISABLED if RSTP not in use. */
+
+    /* Queue to DSCP mapping. */
+    struct ofproto_port_queue *qdscp;
+    size_t n_qdscp;
+};
 
 static void
 dp_update_drop_action_counter(enum xlate_error drop_reason,
@@ -788,7 +817,8 @@ odp_execute_check_pkt_len(void *dp, struct dp_packet *packet, bool steal,
 }
 
 static void
-odp_execute_bpf_prog(struct dp_packet *packet, const struct nlattr *a, struct dp_packet_batch *batch) {
+odp_execute_bpf_prog(void *dp, struct dp_packet *packet, const struct nlattr *a, struct dp_packet_batch *batch,
+                     bool should_steal, odp_execute_cb dp_execute_action) {
     bool packet_pass[batch->count];
     int nr_dropped = 0;
     DP_PACKET_BATCH_FOR_EACH (i, packet, batch) {
@@ -799,6 +829,41 @@ odp_execute_bpf_prog(struct dp_packet *packet, const struct nlattr *a, struct dp
             bpf_result result = execute_bpf_prog(packet, bpf_prog);
             VLOG_INFO("Result, action = %d", result.action);
             VLOG_INFO("Result, port = %d", result.output_port);
+
+            switch (result.action) {
+                case DROP: {
+                    VLOG_INFO("Dropping a packet...");
+                    break;
+                }
+                case REDIRECT: {
+                    VLOG_INFO("Redirecting a packet...");
+                    odp_port_t odp_port;
+                    if (bpf_prog->odp_to_ofport_map != NULL) {
+                        VLOG_INFO("Have port map...");
+                        struct ofport_stub *port;
+                        HMAP_FOR_EACH (port, odp_port_node, bpf_prog->odp_to_ofport_map) {
+                            VLOG_INFO("Showing port...");
+                            VLOG_INFO("OFP Port: %d", port->up.ofp_port);
+                            if (port->up.ofp_port == result.output_port) {
+                                odp_port = port->odp_port;
+                            }
+                        }
+
+                    }
+
+                    //odp_port_t odp_port = u32_to_odp(out_port);
+                    size_t total_size = NLA_HDRLEN + sizeof(odp_port);
+                    struct nlattr *nla = xmalloc(total_size);
+                    nla->nla_len = total_size;
+                    nla->nla_type = OVS_ACTION_ATTR_OUTPUT;
+                    nullable_memcpy(nla+1, &odp_port, sizeof(odp_port));
+                    dp_execute_action(dp, batch, nla, should_steal);
+                    VLOG_INFO("DP executed, port: %u", odp_port);
+                    free(nla);
+                    break;
+                }
+            }
+
 
 //            if (!execute_bpf_prog(packet, bpf_prog)) {
 //                dp_packet_delete(packet);
@@ -1106,17 +1171,18 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
         }
         case OVS_ACTION_ATTR_EXECUTE_PROG: {
             VLOG_INFO("Executing BPF prog");
-            odp_execute_bpf_prog(packet, a, batch);
-            uint32_t port = 2;
-            size_t total_size = NLA_HDRLEN + sizeof(port);
-            struct nlattr *nla = xmalloc(total_size);
-            nla->nla_len = total_size;
-            nla->nla_type = OVS_ACTION_ATTR_OUTPUT;
-            nullable_memcpy(nla+1, &port, sizeof(port));
-            VLOG_INFO("Type of NLA: %d", nl_attr_type(nla));
-            dp_execute_action(dp, batch, nla, steal);
-            VLOG_INFO("DP executed");
-            free(nla);
+            odp_execute_bpf_prog(dp, packet, a, batch, steal,
+                                 dp_execute_action);
+//            uint32_t port = 2;
+//            size_t total_size = NLA_HDRLEN + sizeof(port);
+//            struct nlattr *nla = xmalloc(total_size);
+//            nla->nla_len = total_size;
+//            nla->nla_type = OVS_ACTION_ATTR_OUTPUT;
+//            nullable_memcpy(nla+1, &port, sizeof(port));
+//            VLOG_INFO("Type of NLA: %d", nl_attr_type(nla));
+//            dp_execute_action(dp, batch, nla, steal);
+//            VLOG_INFO("DP executed");
+//            free(nla);
             return;
         }
         case OVS_ACTION_ATTR_OUTPUT:

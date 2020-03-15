@@ -106,6 +106,7 @@ struct ubpf_vm {
     const char **ext_map_names;
     uint16_t nb_maps;
     unsigned long long int loaded_at;
+    struct hmap *odp_to_ofport_map OVS_GUARDED;  // this is needed to enable port forwarding
 };
 
 char *ubpf_error(const char *fmt, ...);

@@ -6323,6 +6323,8 @@ xlate_execute_prog_action(struct xlate_ctx *ctx,
                           struct ofpact_execute_prog *execute_prog)
 {
     struct ofproto *ofproto = &ctx->xin->ofproto->up;
+    struct dpif_backer *backer = &ctx->xin->ofproto->backer;
+
     struct ovs_action_execute_bpf_prog *execute_bpf_prog;
 
     execute_bpf_prog = nl_msg_put_unspec_uninit(ctx->odp_actions,
@@ -6336,6 +6338,7 @@ xlate_execute_prog_action(struct xlate_ctx *ctx,
     HMAP_FOR_EACH_WITH_HASH (vm, hmap_node, hash, &ofproto->ubpf_vms) {
         if (vm->prog_id == prog) {
             execute_bpf_prog->vm = vm;
+            execute_bpf_prog->vm->odp_to_ofport_map = &backer->odp_to_ofport_map;
         }
     }
 }
