@@ -1977,3 +1977,11 @@ dpif_meter_del(struct dpif *dpif, ofproto_meter_id meter_id,
     }
     return error;
 }
+
+int
+dpif_dp_prog_set(struct dpif *dpif, uint16_t prog_id, struct ubpf_vm *prog)
+{
+    VLOG_INFO("dpif_dp_prog_set in dpif.c");
+    dpif->dpif_class->dp_prog_set(dpif, prog_id, prog);
+    return 0;
+}

@@ -6304,6 +6304,8 @@ OVS_EXCLUDED(ofproto_mutex)
     ubpf_vms_insert(ofproto, vm);
     ovs_mutex_unlock(&ofproto_mutex);
 
+    error = ofproto->ofproto_class->dp_prog_set(ofproto, msg.prog_id, vm);
+
     return error;
 }
 

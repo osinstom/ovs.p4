@@ -79,6 +79,7 @@
 #include "unixctl.h"
 #include "util.h"
 #include "uuid.h"
+#include "bpf.h"
 
 VLOG_DEFINE_THIS_MODULE(dpif_netdev);
 
@@ -272,6 +273,11 @@ static bool dpcls_lookup(struct dpcls *cls,
 #define DP_SUPPORTED_METER_BAND_TYPES           \
     ( 1 << OFPMBT13_DROP )
 
+struct dp_prog {
+    uint16_t id;
+    struct ubpf_vm *vm;
+};
+
 struct dp_meter_band {
     struct ofputil_meter_band up; /* type, prec_level, pad, rate, burst_size */
     uint32_t bucket; /* In 1/1000 packets (for PKTPS), or in bits (for KBPS) */
@@ -331,6 +337,9 @@ struct dp_netdev {
     /* Meters. */
     struct ovs_mutex meter_locks[N_METER_LOCKS];
     struct dp_meter *meters[MAX_METERS]; /* Meter bands. */
+
+    /* Data plane program. */
+    struct dp_prog *prog;
 
     /* Probability of EMC insertions is a factor of 'emc_insert_min'.*/
     OVS_ALIGNED_VAR(CACHE_LINE_SIZE) atomic_uint32_t emc_insert_min;
@@ -5993,6 +6002,24 @@ dpif_netdev_meter_del(struct dpif *dpif,
     return error;
 }
 
+static int
+dpif_netdev_dp_prog_set(struct dpif *dpif, uint16_t prog_id, struct ubpf_vm *prog)
+{
+    struct dp_netdev *dp = get_dp_netdev(dpif);
+    struct dp_prog *dp_prog;
+    VLOG_INFO("dpif_netdev_dp_prog_set in dpif-netdev.c");
+    VLOG_INFO("Injecting BPF program ID=%d", prog_id);
+    dp_prog = xzalloc(sizeof *dp_prog);
+    dp_prog->id = prog_id;
+    dp_prog->vm = prog;
+    if (dp->prog) {
+        free(dp->prog);
+        dp->prog = NULL;
+    }
+    dp->prog = dp_prog;
+    return 0;
+}
+
 
 static void
 dpif_netdev_disable_upcall(struct dpif *dpif)
@@ -7812,6 +7839,7 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_meter_set,
     dpif_netdev_meter_get,
     dpif_netdev_meter_del,
+    dpif_netdev_dp_prog_set,
 };
 
 static void

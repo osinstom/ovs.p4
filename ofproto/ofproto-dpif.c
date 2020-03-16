@@ -6597,6 +6597,15 @@ meter_del(struct ofproto *ofproto_, ofproto_meter_id meter_id)
     ovsrcu_postpone(free_meter_id, arg);
 }
 
+static enum ofperr
+dp_prog_set(const struct ofproto *ofproto_, uint16_t prog_id, struct ubpf_vm *prog)
+{
+    VLOG_INFO("dp_prog_set() in ofproto-dpif.c");
+    struct ofproto_dpif *ofproto = ofproto_dpif_cast(ofproto_);
+    dpif_dp_prog_set(ofproto->backer->dpif, prog_id, prog);
+    return 0;
+}
+
 const struct ofproto_class ofproto_dpif_class = {
     init,
     enumerate_types,
@@ -6704,4 +6713,5 @@ const struct ofproto_class ofproto_dpif_class = {
     ct_flush,                   /* ct_flush */
     ct_set_zone_timeout_policy,
     ct_del_zone_timeout_policy,
+    dp_prog_set,
 };
