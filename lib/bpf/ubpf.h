@@ -22,6 +22,21 @@
 
 #include "openvswitch/types.h"
 
+enum ubpf_action{
+    ABORT,
+    DROP,
+    PASS,
+    CLONE,
+    REDIRECT,
+};
+
+struct standard_metadata {
+    uint32_t input_port; /* bit<32> */
+    uint32_t packet_length; /* bit<32> */
+    enum ubpf_action output_action; /* ubpf_action */
+    uint32_t output_port; /* bit<32> */
+};
+
 struct ubpf_vm;
 typedef uint64_t (*ubpf_jit_fn)(void *mem, size_t mem_len);
 

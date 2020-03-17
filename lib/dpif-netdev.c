@@ -4375,6 +4375,7 @@ dp_netdev_process_rxq_port(struct dp_netdev_pmd_thread *pmd,
     }
 
     error = netdev_rxq_recv(rxq->rx, &batch, qlen_p);
+    VLOG_INFO("Receiving from netdev");
     if (!error) {
         /* At least one packet received. */
         *recirc_depth_get() = 0;
@@ -6017,6 +6018,7 @@ dpif_netdev_dp_prog_set(struct dpif *dpif, uint16_t prog_id, struct ubpf_vm *pro
         dp->prog = NULL;
     }
     dp->prog = dp_prog;
+    VLOG_INFO("Injected");
     return 0;
 }
 
@@ -6921,6 +6923,70 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
                             upcall_fail_cnt);
 }
 
+static inline void
+protocol_independent_processing(struct dp_netdev_pmd_thread *pmd,
+                                struct dp_packet_batch *packets_,
+                                odp_port_t in_port)
+{
+    const size_t cnt = dp_packet_batch_size(packets_);
+    VLOG_INFO("Executing batch packets in uBPF VM");
+    struct dp_netdev *dp = pmd->dp;
+    if (OVS_LIKELY(dp->prog)) {
+        struct dp_packet *packet;
+        DP_PACKET_BATCH_FOR_EACH (i, packet, packets_) {
+            struct standard_metadata std_meta = {
+                    .input_port = odp_to_u32(in_port),
+            };
+            ubpf_handle_packet(dp->prog->vm, &std_meta, packet);
+            VLOG_INFO("ubpf processing finished. Output action: %d %d", std_meta.output_action, std_meta.output_port);
+            switch (std_meta.output_action) {
+                case REDIRECT:
+                    struct tx_port *p;
+                    p = pmd_send_port_cache_lookup(pmd, u32_to_odp(std_meta.output_port));
+                    if (OVS_LIKELY(p)) {
+                        struct dp_packet *packet;
+                        struct dp_packet_batch out;
+
+                        if (!should_steal) {
+                            dp_packet_batch_clone(&out, packets_);
+                            dp_packet_batch_reset_cutlen(packets_);
+                            packets_ = &out;
+                        }
+                        dp_packet_batch_apply_cutlen(packets_);
+
+#ifdef DPDK_NETDEV
+                        if (OVS_UNLIKELY(!dp_packet_batch_is_empty(&p->output_pkts)
+                             && packets_->packets[0]->source
+                                != p->output_pkts.packets[0]->source)) {
+                /* XXX: netdev-dpdk assumes that all packets in a single
+                 *      output batch has the same source. Flush here to
+                 *      avoid memory access issues. */
+                dp_netdev_pmd_flush_output_on_port(pmd, p);
+            }
+#endif
+                        if (dp_packet_batch_size(&p->output_pkts)
+                            + dp_packet_batch_size(packets_) > NETDEV_MAX_BURST) {
+                            /* Flush here to avoid overflow. */
+                            dp_netdev_pmd_flush_output_on_port(pmd, p);
+                        }
+
+                        if (dp_packet_batch_is_empty(&p->output_pkts)) {
+                            pmd->n_output_batches++;
+                        }
+
+                        DP_PACKET_BATCH_FOR_EACH (i, packet, packets_) {
+                                p->output_pkts_rxqs[dp_packet_batch_size(&p->output_pkts)] =
+                                        pmd->ctx.last_rxq;
+                                dp_packet_batch_add(&p->output_pkts, packet);
+                            }
+                        return;
+                    break;
+            }
+        }
+    }
+
+}
+
 /* Packets enter the datapath from a port (or from recirculation) here.
  *
  * When 'md_is_valid' is true the metadata in 'packets' are already valid.
@@ -6930,6 +6996,7 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
                   struct dp_packet_batch *packets,
                   bool md_is_valid, odp_port_t port_no)
 {
+
 #if !defined(__CHECKER__) && !defined(_WIN32)
     const size_t PKT_ARRAY_SIZE = dp_packet_batch_size(packets);
 #else
@@ -6954,8 +7021,11 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
     if (!dp_packet_batch_is_empty(packets)) {
         /* Get ingress port from first packet's metadata. */
         in_port = packets->packets[0]->md.in_port.odp_port;
-        fast_path_processing(pmd, packets, missed_keys,
-                             flow_map, index_map, in_port);
+        VLOG_INFO("Packets entering.. Nb of flows = %d", n_flows);
+        protocol_independent_processing(pmd, packets, in_port);
+
+        //fast_path_processing(pmd, packets, missed_keys,
+        //                     flow_map, index_map, in_port);
     }
 
     /* Batch rest of packets which are in flow map. */
@@ -6969,22 +7039,22 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
                                 batches, &n_batches);
      }
 
-    /* All the flow batches need to be reset before any call to
-     * packet_batch_per_flow_execute() as it could potentially trigger
-     * recirculation. When a packet matching flow ‘j’ happens to be
-     * recirculated, the nested call to dp_netdev_input__() could potentially
-     * classify the packet as matching another flow - say 'k'. It could happen
-     * that in the previous call to dp_netdev_input__() that same flow 'k' had
-     * already its own batches[k] still waiting to be served.  So if its
-     * ‘batch’ member is not reset, the recirculated packet would be wrongly
-     * appended to batches[k] of the 1st call to dp_netdev_input__(). */
-    for (i = 0; i < n_batches; i++) {
-        batches[i].flow->batch = NULL;
-    }
-
-    for (i = 0; i < n_batches; i++) {
-        packet_batch_per_flow_execute(&batches[i], pmd);
-    }
+//    /* All the flow batches need to be reset before any call to
+//     * packet_batch_per_flow_execute() as it could potentially trigger
+//     * recirculation. When a packet matching flow ‘j’ happens to be
+//     * recirculated, the nested call to dp_netdev_input__() could potentially
+//     * classify the packet as matching another flow - say 'k'. It could happen
+//     * that in the previous call to dp_netdev_input__() that same flow 'k' had
+//     * already its own batches[k] still waiting to be served.  So if its
+//     * ‘batch’ member is not reset, the recirculated packet would be wrongly
+//     * appended to batches[k] of the 1st call to dp_netdev_input__(). */
+//    for (i = 0; i < n_batches; i++) {
+//        batches[i].flow->batch = NULL;
+//    }
+//
+//    for (i = 0; i < n_batches; i++) {
+//        packet_batch_per_flow_execute(&batches[i], pmd);
+//    }
 }
 
 static void

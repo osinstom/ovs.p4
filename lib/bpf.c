@@ -64,6 +64,16 @@ load_bpf_prog(struct ubpf_vm *vm, size_t code_len, char *code)
     return true;
 }
 
+bpf_result
+ubpf_handle_packet(struct ubpf_vm *vm, struct standard_metadata *md, struct dp_packet *packet)
+{
+    VLOG_INFO("UBPF handling packet");
+    md->packet_length = dp_packet_size(packet);
+    VLOG_INFO("packet size= %d", md->packet_length);
+    uint64_t ret = vm->jitted(packet, md);
+    return (ret == 1)? BPF_MATCH : BPF_NO_MATCH;
+}
+
 void *
 ubpf_map_lookup(const struct ubpf_map *map, void *key)
 {
