@@ -882,11 +882,11 @@ odp_execute_actions(void *dp, struct dp_packet_batch *batch, bool steal,
     struct dp_packet *packet;
     const struct nlattr *a;
     unsigned int left;
-
+    VLOG_INFO("Executing ODP actions.. %d %d", nl_attr_type(actions), actions_len);
     NL_ATTR_FOR_EACH_UNSAFE (a, left, actions, actions_len) {
         int type = nl_attr_type(a);
         bool last_action = (left <= NLA_ALIGN(a->nla_len));
-
+        VLOG_INFO("Check ODP action.. %d", nl_attr_type(a));
         if (requires_datapath_assistance(a)) {
             if (dp_execute_action) {
                 /* Allow 'dp_execute_action' to steal the packet data if we do

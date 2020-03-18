@@ -278,6 +278,16 @@ struct dp_prog {
     struct ubpf_vm *vm;
 };
 
+struct dp_packet_action_map {
+    struct dp_packet *packet;
+    struct nlattr *action;
+};
+
+struct packet_batch_per_action {
+    struct dp_packet_batch output_batch;
+    struct nlattr *action;
+};
+
 struct dp_meter_band {
     struct ofputil_meter_band up; /* type, prec_level, pad, rate, burst_size */
     uint32_t bucket; /* In 1/1000 packets (for PKTPS), or in bits (for KBPS) */
@@ -6433,6 +6443,24 @@ dpif_netdev_packet_get_rss_hash(struct dp_packet *packet,
     return hash;
 }
 
+static inline void
+packet_batch_per_action_init(struct packet_batch_per_action *batch)
+{
+    dp_packet_batch_init(&batch->output_batch);
+}
+
+static inline void
+packet_batch_per_action_execute(struct packet_batch_per_action *batch,
+                                struct dp_netdev_pmd_thread *pmd)
+{
+    struct nlattr *act = batch->action;
+    VLOG_INFO("Output batch size: %d", dp_packet_batch_size(&batch->output_batch));
+    dp_netdev_execute_actions(pmd, &batch->output_batch, true, NULL,
+                              act, NLA_HDRLEN + sizeof(uint32_t)); // FIXME: this is really temporary
+    free(act);
+}
+
+
 struct packet_batch_per_flow {
     unsigned int byte_count;
     uint16_t tcp_flags;
@@ -6494,6 +6522,17 @@ dp_netdev_queue_batches(struct dp_packet *pkt,
     }
 
     packet_batch_per_flow_update(batch, pkt, tcp_flags);
+}
+
+static inline void
+packet_enqueue_to_action_map(struct dp_packet *packet,
+                             struct nlattr *action,
+                             struct dp_packet_action_map *action_map,
+                             size_t index)
+{
+    struct dp_packet_action_map *map = &action_map[index];
+    map->packet = packet;
+    map->action = action;
 }
 
 static inline void
@@ -6925,12 +6964,21 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
 
 static inline void
 protocol_independent_processing(struct dp_netdev_pmd_thread *pmd,
-                                struct dp_packet_batch *packets_,
-                                odp_port_t in_port)
+                                struct dp_packet_batch *packets_)
 {
-    const size_t cnt = dp_packet_batch_size(packets_);
+    odp_port_t in_port = packets_->packets[0]->md.in_port.odp_port;
+
+    const size_t PKT_ARRAY_SIZE = dp_packet_batch_size(packets_);
     VLOG_INFO("Executing batch packets in uBPF VM");
     struct dp_netdev *dp = pmd->dp;
+    struct packet_batch_per_flow batches[PKT_ARRAY_SIZE];
+
+    struct packet_batch_per_action act_batches[PKT_ARRAY_SIZE];
+    struct dp_packet_action_map action_map[PKT_ARRAY_SIZE];
+    struct packet_batch_per_action *batch = &act_batches[0];
+    packet_batch_per_action_init(&batch->output_batch);
+    size_t n_actions = 1; // only OUTPUT supported now
+
     if (OVS_LIKELY(dp->prog)) {
         struct dp_packet *packet;
         DP_PACKET_BATCH_FOR_EACH (i, packet, packets_) {
@@ -6939,50 +6987,42 @@ protocol_independent_processing(struct dp_netdev_pmd_thread *pmd,
             };
             ubpf_handle_packet(dp->prog->vm, &std_meta, packet);
             VLOG_INFO("ubpf processing finished. Output action: %d %d", std_meta.output_action, std_meta.output_port);
+            struct nlattr *act;
             switch (std_meta.output_action) {
-                case REDIRECT:
-                    struct tx_port *p;
-                    p = pmd_send_port_cache_lookup(pmd, u32_to_odp(std_meta.output_port));
-                    if (OVS_LIKELY(p)) {
-                        struct dp_packet *packet;
-                        struct dp_packet_batch out;
-
-                        if (!should_steal) {
-                            dp_packet_batch_clone(&out, packets_);
-                            dp_packet_batch_reset_cutlen(packets_);
-                            packets_ = &out;
-                        }
-                        dp_packet_batch_apply_cutlen(packets_);
-
-#ifdef DPDK_NETDEV
-                        if (OVS_UNLIKELY(!dp_packet_batch_is_empty(&p->output_pkts)
-                             && packets_->packets[0]->source
-                                != p->output_pkts.packets[0]->source)) {
-                /* XXX: netdev-dpdk assumes that all packets in a single
-                 *      output batch has the same source. Flush here to
-                 *      avoid memory access issues. */
-                dp_netdev_pmd_flush_output_on_port(pmd, p);
-            }
-#endif
-                        if (dp_packet_batch_size(&p->output_pkts)
-                            + dp_packet_batch_size(packets_) > NETDEV_MAX_BURST) {
-                            /* Flush here to avoid overflow. */
-                            dp_netdev_pmd_flush_output_on_port(pmd, p);
-                        }
-
-                        if (dp_packet_batch_is_empty(&p->output_pkts)) {
-                            pmd->n_output_batches++;
-                        }
-
-                        DP_PACKET_BATCH_FOR_EACH (i, packet, packets_) {
-                                p->output_pkts_rxqs[dp_packet_batch_size(&p->output_pkts)] =
-                                        pmd->ctx.last_rxq;
-                                dp_packet_batch_add(&p->output_pkts, packet);
-                            }
-                        return;
+                case REDIRECT: {
+                    VLOG_INFO("REDIRECT");
+                    uint32_t port = std_meta.output_port;
+                    size_t total_size = NLA_HDRLEN + sizeof(port);
+                    act = xzalloc(total_size);
+                    act->nla_len = total_size;
+                    act->nla_type = OVS_ACTION_ATTR_OUTPUT;
+                    nullable_memcpy(act + 1, &port, sizeof(port));
                     break;
+                }
             }
+
+            VLOG_INFO("Enqueueing to action map, %d", act->nla_type);
+            //packet_enqueue_to_action_map(packet, act, action_map, 0);
+            batch->action = act;
+            dp_packet_batch_add(&batch->output_batch, packet);
         }
+
+//        size_t i;
+//        for (i = 0; i < n_actions; i++) {
+//            struct dp_packet_action_map *map = &action_map[i];
+//
+//            struct packet_batch_per_action *batch = &act_batches[0]; // 0 hardcoded for action OUTPUT
+//            if (OVS_UNLIKELY(!batch)) {
+//                packet_batch_per_action_init(&batch->output_batch);
+//                batch->action = map->action;
+//            }
+//            dp_packet_batch_add(&batch->output_batch, packet);
+//        }
+
+        //for (i = 0; i < n_actions; i++) {
+            packet_batch_per_action_execute(batch, pmd);
+        //}
+
     }
 
 }
@@ -6996,6 +7036,11 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
                   struct dp_packet_batch *packets,
                   bool md_is_valid, odp_port_t port_no)
 {
+    bool p4_enabled = true; // FIXME: should be configurable in the future
+    if (p4_enabled) {
+        protocol_independent_processing(pmd, packets);
+        return;
+    }
 
 #if !defined(__CHECKER__) && !defined(_WIN32)
     const size_t PKT_ARRAY_SIZE = dp_packet_batch_size(packets);
@@ -7021,11 +7066,8 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
     if (!dp_packet_batch_is_empty(packets)) {
         /* Get ingress port from first packet's metadata. */
         in_port = packets->packets[0]->md.in_port.odp_port;
-        VLOG_INFO("Packets entering.. Nb of flows = %d", n_flows);
-        protocol_independent_processing(pmd, packets, in_port);
-
-        //fast_path_processing(pmd, packets, missed_keys,
-        //                     flow_map, index_map, in_port);
+        fast_path_processing(pmd, packets, missed_keys,
+                             flow_map, index_map, in_port);
     }
 
     /* Batch rest of packets which are in flow map. */
@@ -7048,13 +7090,13 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
 //     * already its own batches[k] still waiting to be served.  So if its
 //     * ‘batch’ member is not reset, the recirculated packet would be wrongly
 //     * appended to batches[k] of the 1st call to dp_netdev_input__(). */
-//    for (i = 0; i < n_batches; i++) {
-//        batches[i].flow->batch = NULL;
-//    }
-//
-//    for (i = 0; i < n_batches; i++) {
-//        packet_batch_per_flow_execute(&batches[i], pmd);
-//    }
+    for (i = 0; i < n_batches; i++) {
+        batches[i].flow->batch = NULL;
+    }
+
+    for (i = 0; i < n_batches; i++) {
+        packet_batch_per_flow_execute(&batches[i], pmd);
+    }
 }
 
 static void
@@ -7241,6 +7283,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
 
     switch ((enum ovs_action_attr)type) {
     case OVS_ACTION_ATTR_OUTPUT:
+        VLOG_INFO("EXECUTING OUTPUT ACTION");
         p = pmd_send_port_cache_lookup(pmd, nl_attr_get_odp_port(a));
         if (OVS_LIKELY(p)) {
             struct dp_packet *packet;
