@@ -285,7 +285,14 @@ struct dp_packet_action_map {
 
 struct packet_batch_per_action {
     struct dp_packet_batch output_batch;
+    struct dp_netdev_action_flow *action;
+};
+
+struct dp_netdev_action_flow {
+    struct cmap_node node;
     struct nlattr *action;
+
+    struct packet_batch_per_action *action_batch;
 };
 
 struct dp_meter_band {
@@ -676,6 +683,12 @@ struct dp_netdev_pmd_thread {
      */
     struct ovs_mutex flow_mutex;
     struct cmap flow_table OVS_GUARDED; /* Flow table. */
+
+    /* Action-Table
+     *
+     */
+    struct ovs_mutex action_mutex;
+    struct cmap action_table OVS_GUARDED;
 
     /* One classifier per in_port polled by the pmd */
     struct cmap classifiers;
@@ -6149,6 +6162,8 @@ dp_netdev_configure_pmd(struct dp_netdev_pmd_thread *pmd, struct dp_netdev *dp,
     atomic_init(&pmd->reload, false);
     ovs_mutex_init(&pmd->flow_mutex);
     ovs_mutex_init(&pmd->port_mutex);
+    ovs_mutex_init(&pmd->action_mutex);
+    cmap_init(&pmd->action_table);
     cmap_init(&pmd->flow_table);
     cmap_init(&pmd->classifiers);
     pmd->ctx.last_rxq = NULL;
@@ -6187,6 +6202,8 @@ dp_netdev_destroy_pmd(struct dp_netdev_pmd_thread *pmd)
     }
     cmap_destroy(&pmd->classifiers);
     cmap_destroy(&pmd->flow_table);
+    cmap_destroy(&pmd->action_table);
+    ovs_mutex_destroy(&pmd->action_mutex);
     ovs_mutex_destroy(&pmd->flow_mutex);
     seq_destroy(pmd->reload_seq);
     ovs_mutex_destroy(&pmd->port_mutex);
@@ -6444,8 +6461,12 @@ dpif_netdev_packet_get_rss_hash(struct dp_packet *packet,
 }
 
 static inline void
-packet_batch_per_action_init(struct packet_batch_per_action *batch)
+packet_batch_per_action_init(struct packet_batch_per_action *batch,
+                             struct dp_netdev_action_flow *action)
 {
+    action->action_batch = batch;
+    batch->action = action;
+
     dp_packet_batch_init(&batch->output_batch);
 }
 
@@ -6453,7 +6474,7 @@ static inline void
 packet_batch_per_action_execute(struct packet_batch_per_action *batch,
                                 struct dp_netdev_pmd_thread *pmd)
 {
-    struct nlattr *act = batch->action;
+    struct nlattr *act = batch->action->action;
     VLOG_INFO("Output batch size: %d", dp_packet_batch_size(&batch->output_batch));
     dp_netdev_execute_actions(pmd, &batch->output_batch, true, NULL,
                               act, NLA_HDRLEN + sizeof(uint32_t)); // FIXME: this is really temporary
@@ -6522,6 +6543,39 @@ dp_netdev_queue_batches(struct dp_packet *pkt,
     }
 
     packet_batch_per_flow_update(batch, pkt, tcp_flags);
+}
+
+static inline struct dp_netdev_action_flow *
+get_dp_netdev_action_flow(struct dp_netdev_pmd_thread *pmd,
+                          uint32_t hash)
+{
+    return cmap_find(&pmd->action_table, hash);
+}
+
+static inline void
+packet_batch_per_action_update(struct packet_batch_per_action *batch,
+                               struct dp_packet *pkt)
+{
+    VLOG_INFO("Is batch NULL? %d", &batch->output_batch == NULL);
+    dp_packet_batch_add(&batch->output_batch, pkt);
+}
+
+static inline void
+dp_netdev_queue_action_batches(struct dp_packet *pkt,
+                               struct dp_netdev_action_flow *action,
+                               struct packet_batch_per_action *batches,
+                               size_t *n_batches)
+{
+    VLOG_INFO("BATCHING ACTION FLOW");
+    struct packet_batch_per_action *batch = action->action_batch;
+
+    if (OVS_UNLIKELY(!batch)) {
+        batch = &batches[(*n_batches)++];
+        packet_batch_per_action_init(batch, action);
+    }
+    VLOG_INFO("UPDATING ACTION FLOW");
+    packet_batch_per_action_update(batch, pkt);
+    VLOG_INFO("UAfter update");
 }
 
 static inline void
@@ -6971,13 +7025,16 @@ protocol_independent_processing(struct dp_netdev_pmd_thread *pmd,
     const size_t PKT_ARRAY_SIZE = dp_packet_batch_size(packets_);
     VLOG_INFO("Executing batch packets in uBPF VM");
     struct dp_netdev *dp = pmd->dp;
-    struct packet_batch_per_flow batches[PKT_ARRAY_SIZE];
 
+    // Initialize array of batches of size PKT_ARRAY_SIZE because
+    // in the worst-case each packet can be enqueued to different batches.
+    // It means every packet in the input batch will have different action.
     struct packet_batch_per_action act_batches[PKT_ARRAY_SIZE];
-    struct dp_packet_action_map action_map[PKT_ARRAY_SIZE];
-    struct packet_batch_per_action *batch = &act_batches[0];
-    packet_batch_per_action_init(&batch->output_batch);
-    size_t n_actions = 1; // only OUTPUT supported now
+    //struct dp_packet_action_map action_map[PKT_ARRAY_SIZE];
+    size_t n_batches = 0;
+
+    // It stores number of unique action (e.g. output:1 != output:2)
+    size_t n_unique_actions = 0;
 
     if (OVS_LIKELY(dp->prog)) {
         struct dp_packet *packet;
@@ -6997,14 +7054,34 @@ protocol_independent_processing(struct dp_netdev_pmd_thread *pmd,
                     act->nla_len = total_size;
                     act->nla_type = OVS_ACTION_ATTR_OUTPUT;
                     nullable_memcpy(act + 1, &port, sizeof(port));
+                    VLOG_INFO("Before HASH");
+                    uint32_t hash = hash_2words(std_meta.output_action, std_meta.output_port);
+                    VLOG_INFO("After HASH");
+                    struct dp_netdev_action_flow *act_flow;
+                    VLOG_INFO("Before get action flow");
+                    act_flow = get_dp_netdev_action_flow(pmd, hash);
+                    VLOG_INFO("After get action flow");
+                    if (!act_flow) {
+                        VLOG_INFO("Alocation act_flow");
+                        act_flow = xmalloc(sizeof *act_flow);  // TODO: must be freed somewhere later
+                        act_flow->action = act;
+                        VLOG_INFO("Inserting action flow");
+                        ovs_mutex_lock(&pmd->action_mutex);
+                        cmap_insert(&pmd->action_table, &act_flow->node, hash);
+                        ovs_mutex_unlock(&pmd->action_mutex);
+                        VLOG_INFO("Inserted action flow");
+                    }
+
+                    dp_netdev_queue_action_batches(packet, act_flow, act_batches, &n_batches);
+
                     break;
                 }
             }
 
-            VLOG_INFO("Enqueueing to action map, %d", act->nla_type);
-            //packet_enqueue_to_action_map(packet, act, action_map, 0);
-            batch->action = act;
-            dp_packet_batch_add(&batch->output_batch, packet);
+//            VLOG_INFO("Enqueueing to action map, %d", act->nla_type);
+//            //packet_enqueue_to_action_map(packet, act, action_map, 0);
+//            batch->action = act;
+//            dp_packet_batch_add(&batch->output_batch, packet);
         }
 
 //        size_t i;
@@ -7018,10 +7095,10 @@ protocol_independent_processing(struct dp_netdev_pmd_thread *pmd,
 //            }
 //            dp_packet_batch_add(&batch->output_batch, packet);
 //        }
-
-        //for (i = 0; i < n_actions; i++) {
-            packet_batch_per_action_execute(batch, pmd);
-        //}
+        size_t i;
+        for (i = 0; i < n_batches; i++) {
+            packet_batch_per_action_execute(&act_batches[i], pmd);
+        }
 
     }
 
