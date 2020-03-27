@@ -7030,11 +7030,9 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
 
 static inline void
 protocol_independent_processing(struct dp_netdev_pmd_thread *pmd,
-                                struct dp_packet_batch *packets_)
+                                struct dp_packet_batch *packets_,
+                                odp_port_t in_port)
 {
-    odp_port_t in_port = packets_->packets[0]->md.in_port.odp_port;
-
-    VLOG_INFO("Executing batch packets in uBPF VM");
     struct dp_netdev *dp = pmd->dp;
 
     if (OVS_LIKELY(dp->prog)) {
@@ -7083,7 +7081,7 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
 {
     bool p4_enabled = true; // FIXME: should be configurable in the future
     if (p4_enabled) {
-        protocol_independent_processing(pmd, packets);
+        protocol_independent_processing(pmd, packets, port_no);
         return;
     }
 
