@@ -485,6 +485,7 @@ include Documentation/automake.mk
 include m4/automake.mk
 include lib/automake.mk
 include ofproto/automake.mk
+include p4rt/automake.mk
 include utilities/automake.mk
 include tests/automake.mk
 include include/automake.mk
