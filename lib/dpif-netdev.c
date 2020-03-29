@@ -7043,9 +7043,10 @@ protocol_independent_processing(struct dp_netdev_pmd_thread *pmd,
             };
 
             ubpf_handle_packet(dp->prog->vm, &std_meta, packet);
-
+//            VLOG_INFO("From uBPF, action = %d", std_meta.output_action);
             switch (std_meta.output_action) {
                 case REDIRECT: {
+//                    VLOG_INFO("Action Redirect, port = %d", std_meta.output_port);
                     uint32_t hash = hash_2words(std_meta.output_action,
                             std_meta.output_port);
 
@@ -7326,10 +7327,10 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
 
     switch ((enum ovs_action_attr)type) {
     case OVS_ACTION_ATTR_OUTPUT:
-        VLOG_INFO("EXECUTING OUTPUT ACTION");
+//        VLOG_INFO("Executing OUTPUT action");
         p = pmd_send_port_cache_lookup(pmd, nl_attr_get_odp_port(a));
         if (OVS_LIKELY(p)) {
-            VLOG_INFO("Output to %d", p->port->port_no);
+
             struct dp_packet *packet;
             struct dp_packet_batch out;
 
@@ -7370,7 +7371,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
             COVERAGE_ADD(datapath_drop_invalid_port,
                          dp_packet_batch_size(packets_));
         }
-        VLOG_INFO("FINSHED EXECUTING OUTPUT ACTION");
+
         break;
 
     case OVS_ACTION_ATTR_TUNNEL_PUSH:

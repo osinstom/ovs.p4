@@ -26,7 +26,6 @@ enum ubpf_action{
     ABORT,
     DROP,
     PASS,
-    CLONE,
     REDIRECT,
 };
 
