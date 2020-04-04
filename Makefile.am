@@ -98,7 +98,10 @@ EXTRA_DIST = \
 	examples/tunneling/vlan.c \
 	examples/tunneling/mpls.c \
 	examples/tunneling/vxlan.c \
-	.mailmap
+	.mailmap \
+	.gitmodules \
+	p4c
+
 bin_PROGRAMS =
 sbin_PROGRAMS =
 bin_SCRIPTS =
