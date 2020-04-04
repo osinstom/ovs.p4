@@ -7080,12 +7080,16 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
                   struct dp_packet_batch *packets,
                   bool md_is_valid, odp_port_t port_no)
 {
+    uint64_t start, cycles;
     bool p4_enabled = true; // FIXME: should be configurable in the future
     if (p4_enabled) {
+        start = cycles_counter_update(&pmd->perf_stats);
         protocol_independent_processing(pmd, packets, port_no);
+        cycles = cycles_counter_update(&pmd->perf_stats) - start;
+        VLOG_INFO("uBPF Cycles used: %u", cycles);
         return;
     }
-
+    start = cycles_counter_update(&pmd->perf_stats);
 #if !defined(__CHECKER__) && !defined(_WIN32)
     const size_t PKT_ARRAY_SIZE = dp_packet_batch_size(packets);
 #else
@@ -7141,6 +7145,8 @@ dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
     for (i = 0; i < n_batches; i++) {
         packet_batch_per_flow_execute(&batches[i], pmd);
     }
+    cycles = cycles_counter_update(&pmd->perf_stats) - start;
+    VLOG_INFO("NETDEV Cycles used: %u", cycles);
 }
 
 static void
