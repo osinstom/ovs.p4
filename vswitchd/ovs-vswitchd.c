@@ -32,6 +32,7 @@
 #include "dirs.h"
 #include "dpif.h"
 #include "dummy.h"
+#include "dp_ubpf.h"
 #include "fatal-signal.h"
 #include "memory.h"
 #include "netdev.h"
@@ -166,6 +167,7 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
         OPT_DPDK,
         SSL_OPTION_ENUMS,
         OPT_DUMMY_NUMA,
+        OPT_P4
     };
     static const struct option long_options[] = {
         {"help",        no_argument, NULL, 'h'},
@@ -182,6 +184,7 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
         {"disable-system-route", no_argument, NULL, OPT_DISABLE_SYSTEM_ROUTE},
         {"dpdk", optional_argument, NULL, OPT_DPDK},
         {"dummy-numa", required_argument, NULL, OPT_DUMMY_NUMA},
+        {"enable-p4", optional_argument, NULL, OPT_P4},
         {NULL, 0, NULL, 0},
     };
     char *short_options = ovs_cmdl_long_options_to_short_options(long_options);
@@ -244,6 +247,10 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
 
         case OPT_DUMMY_NUMA:
             ovs_numa_set_dummy(optarg);
+            break;
+
+        case OPT_P4:
+            ubpf_enable();
             break;
 
         default:

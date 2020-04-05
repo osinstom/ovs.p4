@@ -1,0 +1,29 @@
+====================
+Open vSwitch with P4
+====================
+
+Introduction
+------------
+
+Performance optimizations
+-------------------------
+P4 Compiler:
+
+1. Function inlining - all functions in uBPF datapath are defined as `inline`.
+2. Optimization directives - apply `likely()` or `unlikely()` directives to the C code generated from
+P4 program.
+
+**Ideas**:
+- If header's stack is not manipulated (no encap/decap) we can simply omit deparsing stage.
+- If packet's field is not used as Match Key in any of P4 tables we don't need to parse it.
+- If packet's header was not modified and stay in the same position in the header stack
+(e.g. Ethernet will be at the first position almost always) there is no need to deparse it
+(deparsing for this header can be omitted).
+- I should probably analyze cache line size alignment of `Headers_t` structure used in uBPF program.
+
+
+OVS uBPF datapath:
+
+1. The small change (avoid post-processing delete of packet batch) helped to introduce significant
+packet processing improvement (about ~100% better throughput). Commit: https://github.com/osinstom/ovs.p4/commit/6a7b6b0a977f77930ce822a0e113410d2d7db2e3
+

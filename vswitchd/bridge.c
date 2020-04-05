@@ -403,6 +403,12 @@ bridge_init_ofproto(const struct ovsrec_open_vswitch *cfg)
 }
 
 static void
+bridge_init_p4rt(const struct ovsrec_open_vswitch *cfg)
+{
+
+}
+
+static void
 if_change_cb(void *aux OVS_UNUSED)
 {
     seq_change(ifaces_changed);
@@ -3243,7 +3249,11 @@ bridge_run__(void)
 
     /* Let each bridge do the work that it needs to do. */
     HMAP_FOR_EACH (br, node, &all_bridges) {
-        ofproto_run(br->ofproto);
+        if (br->ofproto) {
+            ofproto_run(br->ofproto);
+        } else if {
+
+        }
     }
 }
 
@@ -3294,6 +3304,9 @@ bridge_run(void)
      * initialization has already occurred, bridge_init_ofproto()
      * returns immediately. */
     bridge_init_ofproto(cfg);
+
+    /* Initialize the P4Runtime library. */
+    bridge_init_p4rt(cfg);
 
     /* Once the value of flow-restore-wait is false, we no longer should
      * check its value from the database. */

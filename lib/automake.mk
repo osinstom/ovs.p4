@@ -78,6 +78,8 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/dpctl.h \
 	lib/dp-packet.h \
 	lib/dp-packet.c \
+	lib/dp_ubpf.c \
+	lib/dp_ubpf.h \
 	lib/dpdk.h \
 	lib/dpif-netdev-lookup-generic.c \
 	lib/dpif-netdev.c \
@@ -86,6 +88,8 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/dpif-netdev-perf.c \
 	lib/dpif-netdev-perf.h \
 	lib/dpif-provider.h \
+	lib/dpif-ubpf.c \
+	lib/dpif-ubpf.h \
 	lib/dpif.c \
 	lib/dpif.h \
 	lib/heap.c \
