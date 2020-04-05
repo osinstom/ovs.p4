@@ -6536,7 +6536,7 @@ packet_batch_per_action_execute(struct packet_batch_per_action *batch,
     struct nlattr *act = batch->action->action;
     dp_netdev_execute_actions(pmd, &batch->output_batch, false, NULL,
                               act, NLA_HDRLEN + sizeof(uint32_t)); // FIXME: this is really temporary
-    dp_packet_delete_batch(&batch->output_batch, true);
+    dp_packet_batch_init(&batch->output_batch);
 }
 
 static inline struct dp_netdev_action_flow *
@@ -6560,9 +6560,9 @@ dp_netdev_action_flow_init(struct dp_netdev_pmd_thread *pmd,
     act_flow->action = act;
     act_flow->action_batch = NULL; // force batch initialization
     act_flow->hash = hash;
-    ovs_mutex_lock(&pmd->action_mutex);
+
     cmap_insert(&pmd->action_table, &act_flow->node, hash);
-    ovs_mutex_unlock(&pmd->action_mutex);
+
     return act_flow;
 }
 
@@ -6574,7 +6574,7 @@ get_dp_netdev_action_flow(struct dp_netdev_pmd_thread *pmd,
     struct dp_netdev_action_flow *act_flow;
 
     node = cmap_find(&pmd->action_table, hash);
-    if (node != NULL) {
+    if (OVS_LIKELY(node != NULL)) {
         return CONTAINER_OF(node, struct dp_netdev_action_flow, node);
     }
     return NULL;
