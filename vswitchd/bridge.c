@@ -42,6 +42,7 @@
 #include "nx-match.h"
 #include "ofproto/bond.h"
 #include "ofproto/ofproto.h"
+#include "p4rt/p4rt.h"
 #include "openvswitch/dynamic-string.h"
 #include "openvswitch/list.h"
 #include "openvswitch/meta-flow.h"
@@ -126,6 +127,9 @@ struct bridge {
     /* OpenFlow switch processing. */
     struct ofproto *ofproto;    /* OpenFlow switch. */
 
+    /* P4Runtime switch processing. */
+    struct p4rt *p4rt;          /* P4Runtime switch. */
+
     /* Bridge ports. */
     struct hmap ports;          /* "struct port"s indexed by name. */
     struct hmap ifaces;         /* "struct iface"s indexed by ofp_port. */
@@ -166,17 +170,6 @@ struct ct_zone {
                                  * collection. */
 };
 
-/* Internal representation of datapath configuration table in OVSDB. */
-struct datapath {
-    char *type;                 /* Datapath type. */
-    struct hmap ct_zones;       /* Map of 'struct ct_zone' elements, indexed
-                                 * by 'zone'. */
-    struct hmap_node node;      /* Node in 'all_datapaths' hmap. */
-    struct smap caps;           /* Capabilities. */
-    unsigned int last_used;     /* The last idl_seqno that this 'datapath'
-                                 * used in OVSDB. This number is used for
-                                 * garbage collection. */
-};
 
 /* All bridges, indexed by name. */
 static struct hmap all_bridges = HMAP_INITIALIZER(&all_bridges);
@@ -405,7 +398,7 @@ bridge_init_ofproto(const struct ovsrec_open_vswitch *cfg)
 static void
 bridge_init_p4rt(const struct ovsrec_open_vswitch *cfg)
 {
-
+    VLOG_INFO("Initializing P4rt for OVS bridge");
 }
 
 static void
@@ -890,6 +883,17 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
             } else {
                 /* Trigger storing datapath version. */
                 seq_change(connectivity_seq_get());
+            }
+        }
+        // FIXME: temporary, should initialize either ofproto or p4rt, not both.
+        if (!br->p4rt) {
+            int error;
+
+            error = p4rt_create(br->name, br->type, &br->p4rt);
+            if (error) {
+                VLOG_ERR("failed to create bridge %s: %s", br->name,
+                         ovs_strerror(error));
+                // TODO: destroy bridge here
             }
         }
     }
@@ -3251,8 +3255,8 @@ bridge_run__(void)
     HMAP_FOR_EACH (br, node, &all_bridges) {
         if (br->ofproto) {
             ofproto_run(br->ofproto);
-        } else if {
-
+        } else if (br->p4rt) {
+            p4rt_run(br->p4rt);
         }
     }
 }

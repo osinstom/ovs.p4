@@ -6,6 +6,8 @@ CLEANFILES += \
 vswitchd_ovs_vswitchd_SOURCES = \
 	vswitchd/bridge.c \
 	vswitchd/bridge.h \
+	vswitchd/p4rt-bridge.c \
+	vswitchd/p4rt-bridge.h \
 	vswitchd/ovs-vswitchd.c \
 	vswitchd/system-stats.c \
 	vswitchd/system-stats.h \
@@ -13,6 +15,7 @@ vswitchd_ovs_vswitchd_SOURCES = \
 	vswitchd/xenserver.h
 vswitchd_ovs_vswitchd_LDADD = \
 	ofproto/libofproto.la \
+	p4rt/libp4rt.la \
 	lib/libsflow.la \
 	lib/libopenvswitch.la
 vswitchd_ovs_vswitchd_LDFLAGS = $(AM_LDFLAGS) $(DPDK_vswitchd_LDFLAGS)

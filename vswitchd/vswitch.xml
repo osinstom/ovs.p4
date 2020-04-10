@@ -60,7 +60,11 @@
       </column>
 
       <column name="bridges">
-        Set of bridges managed by the daemon.
+        Set of OpenFlow bridges managed by the daemon.
+      </column>
+
+      <column name="p4rt_bridges">
+        Set of P4Runtime bridges managed by the daemon.
       </column>
 
       <column name="ssl">
@@ -1685,6 +1689,27 @@
 
       <column name="other_config"/>
       <column name="external_ids"/>
+    </group>
+  </table>
+
+  <table name="P4rtBridge">
+    <group title="Core Features">
+      <column name="name">
+        <p>
+          P4Runtime Bridge identifier.  Must be unique among the names of ports,
+          interfaces, and bridges on a host.
+        </p>
+
+        <p>
+          The name must be alphanumeric and must not contain forward or
+          backward slashes.  The name of a bridge is also the name of an <ref
+                table="Interface"/> (and a <ref table="Port"/>) within the bridge, so
+          the restrictions on the <ref table="Interface" column="name"/> column
+          in the <ref table="Interface"/> table, particularly on length, also
+          apply to bridge names.  Refer to the documentation for <ref
+                table="Interface"/> names for details.
+        </p>
+      </column>
     </group>
   </table>
 
