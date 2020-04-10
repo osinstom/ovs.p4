@@ -6,8 +6,6 @@ CLEANFILES += \
 vswitchd_ovs_vswitchd_SOURCES = \
 	vswitchd/bridge.c \
 	vswitchd/bridge.h \
-	vswitchd/p4rt-bridge.c \
-	vswitchd/p4rt-bridge.h \
 	vswitchd/ovs-vswitchd.c \
 	vswitchd/system-stats.c \
 	vswitchd/system-stats.h \
