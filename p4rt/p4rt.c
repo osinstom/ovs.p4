@@ -1,3 +1,4 @@
+#include <config.h>
 #include "openvswitch/hmap.h"
 #include "hash.h"
 #include "openvswitch/vlog.h"
