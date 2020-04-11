@@ -461,6 +461,7 @@ bridge_init(const char *remote)
     ovsdb_idl_omit_alert(idl, &ovsrec_bridge_col_rstp_status);
     ovsdb_idl_omit_alert(idl, &ovsrec_bridge_col_stp_enable);
     ovsdb_idl_omit_alert(idl, &ovsrec_bridge_col_rstp_enable);
+    ovsdb_idl_omit_alert(idl, &ovsrec_bridge_col_p4);
     ovsdb_idl_omit(idl, &ovsrec_bridge_col_external_ids);
 
     ovsdb_idl_omit_alert(idl, &ovsrec_port_col_status);
@@ -3629,7 +3630,10 @@ bridge_create(const struct ovsrec_bridge *br_cfg)
     br->cfg = br_cfg;
 
     // TODO: should be configurabe in OVSDB
-    br->p4 = true;
+    br->p4 = br_cfg->p4;
+    if (br->p4) {
+        VLOG_INFO("Setting P4 support for bridge %s", br->name);
+    }
 
     /* Derive the default Ethernet address from the bridge's UUID.  This should
      * be unique and it will be stable between ovs-vswitchd runs.  */

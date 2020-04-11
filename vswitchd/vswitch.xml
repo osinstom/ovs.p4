@@ -1140,6 +1140,10 @@
         NetFlow configuration.
       </column>
 
+      <column name="p4">
+        P4 support.
+      </column>
+
       <column name="sflow">
         sFlow(R) configuration.
       </column>

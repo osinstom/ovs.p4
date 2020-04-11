@@ -1,6 +1,6 @@
 {"name": "Open_vSwitch",
  "version": "8.3.0",
- "cksum": "3555943059 26712",
+ "cksum": "283409679 26763",
  "tables": {
    "Open_vSwitch": {
      "columns": {
@@ -78,6 +78,8 @@
          "ephemeral": true},
        "stp_enable": {
          "type": "boolean"},
+       "p4": {
+                "type": "boolean"},
        "rstp_enable": {
          "type": "boolean"},
        "mcast_snooping_enable": {
