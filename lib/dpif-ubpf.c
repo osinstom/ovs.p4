@@ -3,6 +3,7 @@
 #include "dpif-ubpf.h"
 
 #include "dpif-netdev.h"
+#include "p4rt/p4rt-dpif-provider.h"
 #include "dpif-provider.h"
 #include "ovs-atomic.h"
 #include "openvswitch/shash.h"
@@ -170,9 +171,10 @@ dpif_ubpf_flow_dump_create(const struct dpif *dpif_, bool terse,
 
 }
 
-const struct dpif_class dpif_ubpf_class = {
+
+
+const struct p4rt_dpif_class dpif_ubpf_class = {
         "ubpf",
-        true,
         dpif_ubpf_init,
         NULL,
         dpif_ubpf_port_open_type,
@@ -250,10 +252,10 @@ void
 dpif_ubpf_register()
 {
     VLOG_INFO("Registering uBPF datapath type");
-    struct dpif_class *class;
-    class = xmalloc(sizeof *class);
-    *class = dpif_ubpf_class;
-    class->type = xstrdup("ubpf");
-    dp_register_provider(class);
+//    struct dpif_class *class;
+//    class = xmalloc(sizeof *class);
+//    *class = dpif_ubpf_class;
+//    class->type = xstrdup("ubpf");
+//    dp_register_provider(class);
     VLOG_INFO("uBPF datapath type registered successfully");
 }

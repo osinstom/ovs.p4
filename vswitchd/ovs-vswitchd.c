@@ -250,7 +250,7 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
             break;
 
         case OPT_P4:
-            ubpf_enable();
+            //ubpf_enable();
             break;
 
         default:

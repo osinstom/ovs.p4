@@ -405,6 +405,9 @@ bridge_init_p4rt(const struct ovsrec_open_vswitch *cfg)
     if (initialized) {
         return;
     }
+
+    p4rt_init();
+
     VLOG_INFO("Initializing P4rt for OVS bridge");
     initialized = true;
 }
@@ -907,6 +910,7 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
             if (error) {
                 VLOG_ERR("failed to create bridge %s: %s", br->name,
                          ovs_strerror(error));
+                bridge_destroy(br, true);
                 // TODO: destroy bridge here
             }
         }
@@ -2072,7 +2076,9 @@ iface_do_create(const struct bridge *br,
         // TODO: open type for P4rt
 //        type = p4rt_port_open_type(br->p4rt,
 //                                   iface_get_type(iface_cfg, br->cfg));
-        type = iface_get_type(iface_cfg, br->cfg);
+        // For userspace datapath the "internal" port must be created as "tap".
+        // TODO: Type should be retrieved from datapath.
+        type = "tap";
         VLOG_INFO("Interface type is %s", type);
     }
 
@@ -3279,7 +3285,7 @@ static void
 bridge_run__(void)
 {
     struct bridge *br;
-    struct sset types;
+    struct sset types, p4types;
     const char *type;
 
     /* Let each datapath type do the work that it needs to do. */
@@ -3289,6 +3295,14 @@ bridge_run__(void)
         ofproto_type_run(type);
     }
     sset_destroy(&types);
+
+    /* Let each P4 datapath type do the work that it needs to do. */
+    sset_init(&p4types);
+    p4rt_enumerate_types(&p4types);
+    SSET_FOR_EACH (type, &p4types) {
+        p4rt_type_run(type);
+    }
+    sset_destroy(&p4types);
 
     /* Let each bridge do the work that it needs to do. */
     HMAP_FOR_EACH (br, node, &all_bridges) {
@@ -3629,7 +3643,6 @@ bridge_create(const struct ovsrec_bridge *br_cfg)
     br->type = xstrdup(ofproto_normalize_type(br_cfg->datapath_type));
     br->cfg = br_cfg;
 
-    // TODO: should be configurabe in OVSDB
     br->p4 = br_cfg->p4;
     if (br->p4) {
         VLOG_INFO("Setting P4 support for bridge %s", br->name);
@@ -3664,7 +3677,11 @@ bridge_destroy(struct bridge *br, bool del)
         }
 
         hmap_remove(&all_bridges, &br->node);
-        ofproto_destroy(br->ofproto, del);
+        if (br->p4) {
+            p4rt_destroy(br->p4rt, del);
+        } else {
+            ofproto_destroy(br->ofproto, del);
+        }
         hmap_destroy(&br->ifaces);
         hmap_destroy(&br->ports);
         hmap_destroy(&br->iface_by_name);
