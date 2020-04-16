@@ -8,3 +8,6 @@ P4 to uBPF compiler and integrating them with DPDK and AF_XDP interfaces.
 **Note!** This is my side project, which is based on my previous work around [P4rt-OVS](https://github.com/Orange-OpenSource/p4rt-ovs) and 
 [the P4 to uBPF compiler](https://github.com/p4lang/p4c/tree/master/backends/ubpf).
 
+## Acknowledgment
+
+This work is supported by Aaron A. Glenn and Network Service Associates.
