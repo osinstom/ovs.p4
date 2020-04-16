@@ -41,6 +41,24 @@ struct p4rt_class {
      * Returns 0 if successful, otherwise a positive errno value. */
     int (*type_run)(const char *type);
 
+    /*
+     * CONSTRUCTION.
+     */
+    struct p4rt *(*alloc)(void);
+    int (*construct)(struct p4rt *p4rt);
+    void (*destruct)(struct p4rt *p4rt, bool del);
+    void (*dealloc)(struct p4rt *p4rt);
+
+
+    /* Attempts to add 'netdev' as a port on 'p4rt'.  Returns 0 if
+     * successful, otherwise a positive errno value.  The caller should
+     * inform the implementation of the OpenFlow port through the
+     * ->port_construct() method.
+     *
+     * It doesn't matter whether the new port will be returned by a later call
+     * to ->port_poll(); the implementation may do whatever is more
+     * convenient. */
+    int (*port_add)(struct p4rt *p, struct netdev *netdev);
 };
 
 extern const struct p4rt_class p4rt_dpif_class;

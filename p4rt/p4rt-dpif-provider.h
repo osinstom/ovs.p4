@@ -15,6 +15,10 @@ struct p4rt_dpif_class {
      * This function may be set to null if a datapath class needs no
      * initialization at registration time. */
     int (*init)(void);
+
+    int (*open)(const struct p4rt_dpif_class *dpif_class,
+                const char *name, bool create, struct p4rt_dpif **dpifp);
+
 };
 
 extern const struct p4rt_dpif_class dpif_ubpf_class;

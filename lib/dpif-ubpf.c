@@ -77,7 +77,7 @@ create_dp_ubpf(const char *name, const struct dpif_class *class,
 }
 
 static int
-dpif_ubpf_open(const struct dpif_class *class,
+dpif_ubpf_open(const struct p4rt_dpif_class *class,
                const char *name, bool create, struct dpif **dpifp)
 {
     VLOG_INFO("Opening uBPF");
@@ -176,7 +176,7 @@ dpif_ubpf_flow_dump_create(const struct dpif *dpif_, bool terse,
 const struct p4rt_dpif_class dpif_ubpf_class = {
         "ubpf",
         dpif_ubpf_init,
-        NULL,
+        dpif_ubpf_open,
         dpif_ubpf_port_open_type,
         dpif_ubpf_open,
         dpif_ubpf_close,

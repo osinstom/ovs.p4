@@ -2100,7 +2100,7 @@ iface_do_create(const struct bridge *br,
     if (!br->p4) {
         error = ofproto_port_add(br->ofproto, netdev, ofp_portp);
     } else {
-        // TODO: P4rt add port
+        error = p4rt_port_add(br->p4rt, netdev, ofp_portp);
     }
 
     if (error) {

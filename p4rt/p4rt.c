@@ -77,6 +77,7 @@ p4rt_create(const char *datapath_name, const char *datapath_type,
             struct p4rt **p4rtp)
     OVS_EXCLUDED(p4rt_mutex)
 {
+    int error;
     VLOG_INFO("Creating P4rt bridge");
     *p4rtp = NULL;
     struct p4rt *p4rt = xzalloc(sizeof(struct p4rt));
@@ -84,14 +85,17 @@ p4rt_create(const char *datapath_name, const char *datapath_type,
     /* Initialize. */
 //    ovs_mutex_lock(&p4rt_mutex);
     memset(p4rt, 0, sizeof *p4rt);
+    
     p4rt->name = xstrdup(datapath_name);
     p4rt->type = xstrdup(datapath_type);
     hmap_insert(&all_p4rts, &p4rt->hmap_node,
                 hash_string(p4rt->name, 0));
 //    ovs_mutex_unlock(&p4rt_mutex);
 
+    error = p4rt->p4rt_class->construct(p4rt);
+
     *p4rtp = p4rt;
-    return 0;
+    return error;
 }
 
 static void
@@ -160,6 +164,33 @@ p4rt_type_run(const char *datapath_type)
     if (error && error != EAGAIN) {
         VLOG_ERR_RL(&rl, "%s: type_run failed (%s)",
                     datapath_type, ovs_strerror(error));
+    }
+
+    return error;
+}
+
+//int
+//p4rt_port_add(struct p4rt *p, struct netdev *netdev, ofp_port_t *ofp_portp)
+//{
+//    ofp_port_t ofp_port = ofp_portp ? *ofp_portp : 0xffff;  // 0xffff = OFPP_NONE
+//    int error;
+//
+//    error = p->p4rt_class->port_add(p, netdev);
+//    if (!error) {
+//        VLOG_INFO("Port added successful");
+//    }
+//
+//    return error;
+//}
+
+int p4rt_port_add(struct p4rt *p, struct netdev *netdev, ofp_port_t *ofp_portp)
+{
+    ofp_port_t ofp_port = ofp_portp ? *ofp_portp : 0xffff;  // 0xffff = OFPP_NONE
+    int error;
+
+    error = p->p4rt_class->port_add(p, netdev);
+    if (!error) {
+        VLOG_INFO("Port added successful");
     }
 
     return error;
