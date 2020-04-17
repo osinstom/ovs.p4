@@ -8,6 +8,7 @@
 #include "openvswitch/vlog.h"
 #include "ovs-rcu.h"
 #include "sset.h"
+#include "lib/dpif.h"
 
 VLOG_DEFINE_THIS_MODULE(p4rt);
 
@@ -21,6 +22,29 @@ static const struct p4rt_class **p4rt_classes;
 static size_t n_p4rt_classes;
 static size_t allocated_p4rt_classes;
 
+
+static const struct p4rt_class *
+p4rt_class_find__(const char *type)
+{
+    size_t i;
+
+    for (i = 0; i < n_p4rt_classes; i++) {
+        const struct p4rt_class *class = p4rt_classes[i];
+        struct sset types;
+        bool found;
+
+        sset_init(&types);
+        class->enumerate_types(&types);
+        found = sset_contains(&types, type);
+        sset_destroy(&types);
+
+        if (found) {
+            return class;
+        }
+    }
+    VLOG_WARN("unknown datapath type %s", type);
+    return NULL;
+}
 
 /* Registers a new p4rt class.  After successful registration, new p4rts
  * of that type can be created using p4rt_create(). */
@@ -41,6 +65,19 @@ p4rt_class_register(const struct p4rt_class *new_class)
     }
     p4rt_classes[n_p4rt_classes++] = new_class;
     return 0;
+}
+
+const char *
+p4rt_port_open_type(const struct p4rt *p4rt, const char *port_type)
+{
+    VLOG_INFO("P4rt opening type: %s", port_type);
+
+    if (strcmp(port_type, "internal")) {
+        return "tap";
+    }
+
+    // So far, P4rt switch can only be implemented in userspace.
+    return port_type;
 }
 
 /* Clears 'types' and enumerates all registered p4rt types into it.  The
@@ -77,15 +114,31 @@ p4rt_create(const char *datapath_name, const char *datapath_type,
             struct p4rt **p4rtp)
     OVS_EXCLUDED(p4rt_mutex)
 {
+    const struct p4rt_class *class;
     int error;
+    struct p4rt *p4rt;
     VLOG_INFO("Creating P4rt bridge");
     *p4rtp = NULL;
-    struct p4rt *p4rt = xzalloc(sizeof(struct p4rt));
+
+    datapath_type = dpif_normalize_type(datapath_type);
+    class = p4rt_class_find__(datapath_type);
+    if (!class) {
+        VLOG_WARN("could not create datapath %s of unknown type %s",
+                  datapath_name, datapath_type);
+        return EAFNOSUPPORT;
+    }
+
+    p4rt = class->alloc();
+    if (!p4rt) {
+        VLOG_ERR("failed to allocate datapath %s of type %s",
+                 datapath_name, datapath_type);
+        return ENOMEM;
+    }
 
     /* Initialize. */
 //    ovs_mutex_lock(&p4rt_mutex);
     memset(p4rt, 0, sizeof *p4rt);
-    
+    p4rt->p4rt_class = class;
     p4rt->name = xstrdup(datapath_name);
     p4rt->type = xstrdup(datapath_type);
     hmap_insert(&all_p4rts, &p4rt->hmap_node,
@@ -126,29 +179,6 @@ p4rt_destroy(struct p4rt *p, bool del)
 
     /* Destroying rules is deferred, must have 'p4rt' around for them. */
     ovsrcu_postpone(p4rt_destroy_defer__, p);
-}
-
-static const struct p4rt_class *
-p4rt_class_find__(const char *type)
-{
-    size_t i;
-
-    for (i = 0; i < n_p4rt_classes; i++) {
-        const struct p4rt_class *class = p4rt_classes[i];
-        struct sset types;
-        bool found;
-
-        sset_init(&types);
-        class->enumerate_types(&types);
-        found = sset_contains(&types, type);
-        sset_destroy(&types);
-
-        if (found) {
-            return class;
-        }
-    }
-    VLOG_WARN("unknown datapath type %s", type);
-    return NULL;
 }
 
 int

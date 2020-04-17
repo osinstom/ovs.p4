@@ -2073,15 +2073,11 @@ iface_do_create(const struct bridge *br,
         type = ofproto_port_open_type(br->ofproto,
                                       iface_get_type(iface_cfg, br->cfg));
     } else {
-        // TODO: open type for P4rt
-//        type = p4rt_port_open_type(br->p4rt,
-//                                   iface_get_type(iface_cfg, br->cfg));
         // For userspace datapath the "internal" port must be created as "tap".
-        // TODO: Type should be retrieved from datapath.
-        type = "tap";
-        VLOG_INFO("Interface type is %s", type);
+        type = p4rt_port_open_type(br->p4rt,
+                                   iface_get_type(iface_cfg, br->cfg));
     }
-
+    VLOG_INFO("Opening device, Type is %s", type);
     error = netdev_open(iface_cfg->name, type, &netdev);
     if (error) {
         VLOG_WARN_BUF(errp, "could not open network device %s (%s)",
@@ -2101,6 +2097,7 @@ iface_do_create(const struct bridge *br,
         error = ofproto_port_add(br->ofproto, netdev, ofp_portp);
     } else {
         error = p4rt_port_add(br->p4rt, netdev, ofp_portp);
+        VLOG_INFO("P4rt port add finished. Error=%d", error);
     }
 
     if (error) {

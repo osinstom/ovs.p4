@@ -18,10 +18,10 @@ struct registered_dpif_class {
     int refcount;
 };
 
+static struct shash p4rt_dpif_classes = SHASH_INITIALIZER(&p4rt_dpif_classes);
+
 /* All existing p4rt instances, indexed by p4rt->up.type. */
 struct shash all_p4rt_dpif_backers = SHASH_INITIALIZER(&all_p4rt_dpif_backers);
-
-static struct shash p4rt_dpif_classes = SHASH_INITIALIZER(&p4rt_dpif_classes);
 
 /* Protects 'p4rt_dpif_classes'. */
 static struct ovs_mutex p4rt_dpif_mutex = OVS_MUTEX_INITIALIZER;
@@ -37,6 +37,7 @@ p4rt_dpif_cast(const struct p4rt *p4rt)
 static struct registered_dpif_class *
 dp_class_lookup(const char *type)
 {
+    VLOG_INFO("Type: %s", type);
     struct registered_dpif_class *rc;
     ovs_mutex_lock(&p4rt_dpif_mutex);
     rc = shash_find_data(&p4rt_dpif_classes, type);
@@ -111,6 +112,12 @@ p4rt_dpif_init()
     VLOG_INFO("Initializing P4rt Dpif");
 }
 
+const char *
+p4rt_dpif_port_open_type(const char *datapath_type, const char *port_type)
+{
+
+}
+
 void
 p4rt_dpif_enumerate_types(struct sset *types)
 {
@@ -133,6 +140,12 @@ p4rt_dpif_type_run(const char *type)
     VLOG_INFO("p4rt_dpif_type_run");
 }
 
+static struct p4rt *
+p4rt_dpif_alloc() {
+    struct p4rt_dpif *p4rt = xzalloc(sizeof *p4rt);
+    return &p4rt->up;
+}
+
 static int
 do_open(const char *name, const char *type, bool create, struct p4rt_dpif **dpifp)
 {
@@ -142,7 +155,7 @@ do_open(const char *name, const char *type, bool create, struct p4rt_dpif **dpif
 
     dp_initialize();
 
-    type = dpif_normalize_type(type);
+    // TODO: should normalize type here
     registered_class = dp_class_lookup(type);
     if (!registered_class) {
         VLOG_WARN("could not create datapath %s of unknown type %s", name,
@@ -164,6 +177,12 @@ exit:
 }
 
 int
+p4rt_dpif_open(const char *name, const char *type, struct p4rt_dpif **dpifp)
+{
+    return do_open(name, type, false, dpifp);
+}
+
+int
 p4rt_dpif_create(const char *name, const char *type, struct p4rt_dpif **dpifp)
 {
     return do_open(name, type, true, dpifp);
@@ -175,7 +194,7 @@ dpif_create_and_open(const char *name, const char *type, struct p4rt_dpif **dpif
     int error;
     error = p4rt_dpif_create(name, type, dpifp);
     if (error == EEXIST || error == EBUSY) {
-        error = dpif_open(name, type, dpifp);
+        error = p4rt_dpif_open(name, type, dpifp);
         if (error) {
             VLOG_WARN("datapath %s already exists but cannot be opened: %s",
                       name, ovs_strerror(error));
@@ -217,14 +236,51 @@ static int
 p4rt_dpif_construct(struct p4rt *p4rt_)
 {
     VLOG_INFO("Constructing");
+    int error;
     struct p4rt_dpif *p4rt = p4rt_dpif_cast(p4rt_);
 
-
+    error = open_p4rt_dpif_backer(p4rt->up.type, &p4rt->backer);
+    if (error) {
+        return error;
+    }
 
     uuid_generate(&p4rt->uuid);
 
 
-    return 0;
+    return error;
+}
+
+static int
+p4rt_dpif_delete(struct p4rt_dpif *dpif)
+{
+    return dpif->
+}
+
+static void
+close_p4rt_dpif_backer(struct p4rt_dpif_backer *backer, bool del)
+{
+    ovs_assert(backer->refcount > 0);
+
+    if (--backer->refcount) {
+        return;
+    }
+
+    shash_find_and_delete(&all_p4rt_dpif_backers, backer->type);
+    free(backer->type);
+
+    if (del) {
+        p4rt_dpif_delete(backer->dpif);
+    }
+    p4rt_dpif_close(backer->dpif);
+
+    free(backer);
+}
+
+static void
+p4rt_dpif_destruct(struct p4rt *p4rt_, bool del)
+{
+    struct p4rt_dpif *p4rt = p4rt_dpif_cast(p4rt_);
+    close_p4rt_dpif_backer(p4rt->backer, del);
 }
 
 static int
@@ -244,10 +300,10 @@ const struct p4rt_class p4rt_dpif_class = {
     NULL,           /* port_open_type */
     p4rt_dpif_enumerate_types,
     p4rt_dpif_type_run,
-    NULL,
+    p4rt_dpif_alloc,
     p4rt_dpif_construct,
-    NULL,
-    NULL,
+    p4rt_dpif_destruct,
+    p4rt_dpif_dealloc,
     p4rt_dpif_port_add,
 };
 
