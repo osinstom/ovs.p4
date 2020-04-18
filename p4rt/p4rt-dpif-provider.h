@@ -21,6 +21,6 @@ struct p4rt_dpif_class {
 
 };
 
-extern const struct p4rt_dpif_class dpif_ubpf_class;
+extern const struct dpif_class dpif_ubpf_class;
 
 #endif //P4RT_DPIF_PROVIDER_H

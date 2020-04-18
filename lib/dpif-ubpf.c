@@ -127,6 +127,14 @@ dpif_ubpf_wait(struct dpif *dpif)
 }
 
 static int
+dpif_ubpf_port_query_by_name(const struct dpif *dpif, const char *devname,
+                             struct dpif_port *port)
+{
+    // FIXME: make a lookup
+    return ENODEV;
+}
+
+static int
 dpif_ubpf_port_dump_start(const struct dpif *dpif, void **statep)
 {
     return 0;
@@ -164,6 +172,12 @@ dpif_ubpf_get_stats(const struct dpif *dpif, struct dpif_dp_stats *stats)
     return 0;
 }
 
+static int
+dpif_ubpf_port_add(struct dpif *dpif, odp_port_t port_no)
+{
+    return 0;
+}
+
 static struct dpif_flow_dump *
 dpif_ubpf_flow_dump_create(const struct dpif *dpif_, bool terse,
                            struct dpif_flow_dump_types *types OVS_UNUSED)
@@ -173,8 +187,9 @@ dpif_ubpf_flow_dump_create(const struct dpif *dpif_, bool terse,
 
 
 
-const struct p4rt_dpif_class dpif_ubpf_class = {
+const struct dpif_class dpif_ubpf_class = {
         "ubpf",
+        true,
         dpif_ubpf_init,
         dpif_ubpf_open,
         dpif_ubpf_port_open_type,
@@ -185,11 +200,11 @@ const struct p4rt_dpif_class dpif_ubpf_class = {
         dpif_ubpf_wait,
         dpif_ubpf_get_stats,
         NULL,                      /* set_features */
+        dpif_ubpf_port_add,
         NULL,
         NULL,
         NULL,
-        NULL,
-        NULL,
+        dpif_ubpf_port_query_by_name,
         NULL,                       /* port_get_pid */
         dpif_ubpf_port_dump_start,
         dpif_ubpf_port_dump_next,
@@ -252,10 +267,10 @@ void
 dpif_ubpf_register()
 {
     VLOG_INFO("Registering uBPF datapath type");
-//    struct dpif_class *class;
-//    class = xmalloc(sizeof *class);
-//    *class = dpif_ubpf_class;
-//    class->type = xstrdup("ubpf");
-//    dp_register_provider(class);
+    struct dpif_class *class;
+    class = xmalloc(sizeof *class);
+    *class = dpif_ubpf_class;
+    class->type = xstrdup("ubpf");
+    dp_register_provider(class);
     VLOG_INFO("uBPF datapath type registered successfully");
 }

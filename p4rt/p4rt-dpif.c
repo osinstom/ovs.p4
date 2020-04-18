@@ -1,5 +1,8 @@
 #include <config.h>
 #include <errno.h>
+#include "lib/dpif.h"
+#include "lib/netdev-vport.h"
+#include "lib/odp-util.h"
 #include "p4rt-dpif.h"
 #include "p4rt-dpif-provider.h"
 #include "p4rt-provider.h"
@@ -9,7 +12,7 @@
 
 VLOG_DEFINE_THIS_MODULE(p4rt_dpif);
 
-static const struct p4rt_dpif_class *base_dpif_classes[] = {
+static const struct dpif_class *base_dpif_classes[] = {
         &dpif_ubpf_class,
 };
 
@@ -57,53 +60,11 @@ dp_initialize(void)
         int i;
 
         for (i = 0; i < ARRAY_SIZE(base_dpif_classes); i++) {
-            p4_dp_register_provider(base_dpif_classes[i]);
+            dp_register_provider(base_dpif_classes[i]);
         }
 
         ovsthread_once_done(&once);
     }
-}
-
-static int
-p4_dp_register_provider__(const struct p4rt_dpif_class *new_class)
-{
-    struct registered_dpif_class *registered_class;
-    int error;
-
-    if (shash_find(&p4rt_dpif_classes, new_class->type)) {
-        VLOG_WARN("attempted to register duplicate datapath provider: %s",
-                  new_class->type);
-        return EEXIST;
-    }
-
-    error = new_class->init ? new_class->init() : 0;
-    if (error) {
-        VLOG_WARN("failed to initialize %s datapath class: %s",
-                  new_class->type, ovs_strerror(error));
-        return error;
-    }
-
-    registered_class = xmalloc(sizeof *registered_class);
-    registered_class->dpif_class = new_class;
-    registered_class->refcount = 0;
-
-    shash_add(&p4rt_dpif_classes, new_class->type, registered_class);
-
-    return 0;
-}
-
-/* Registers a new datapath provider.  After successful registration, new
- * datapaths of that type can be opened using dpif_open(). */
-int
-p4_dp_register_provider(const struct p4rt_dpif_class *new_class)
-{
-    int error;
-
-    ovs_mutex_lock(&p4rt_dpif_mutex);
-    error = p4_dp_register_provider__(new_class);
-    ovs_mutex_unlock(&p4rt_dpif_mutex);
-
-    return error;
 }
 
 void
@@ -118,20 +79,10 @@ p4rt_dpif_port_open_type(const char *datapath_type, const char *port_type)
 
 }
 
-void
+static void
 p4rt_dpif_enumerate_types(struct sset *types)
 {
-    struct shash_node *node;
-
-    dp_initialize();
-
-    ovs_mutex_lock(&p4rt_dpif_mutex);
-    SHASH_FOR_EACH(node, &p4rt_dpif_classes) {
-        const struct registered_dpif_class *registered_class = node->data;
-        VLOG_INFO("Adding P4 dp type: %s", registered_class->dpif_class->type);
-        sset_add(types, registered_class->dpif_class->type);
-    }
-    ovs_mutex_unlock(&p4rt_dpif_mutex);
+    dp_enumerate_types(types);
 }
 
 static int
@@ -141,68 +92,17 @@ p4rt_dpif_type_run(const char *type)
 }
 
 static struct p4rt *
-p4rt_dpif_alloc() {
+p4rt_dpif_alloc()
+{
     struct p4rt_dpif *p4rt = xzalloc(sizeof *p4rt);
     return &p4rt->up;
 }
 
-static int
-do_open(const char *name, const char *type, bool create, struct p4rt_dpif **dpifp)
+static void
+p4rt_dpif_dealloc(struct p4rt *p4rt_)
 {
-    struct p4rt_dpif *dpif = NULL;
-    int error;
-    struct registered_dpif_class *registered_class;
-
-    dp_initialize();
-
-    // TODO: should normalize type here
-    registered_class = dp_class_lookup(type);
-    if (!registered_class) {
-        VLOG_WARN("could not create datapath %s of unknown type %s", name,
-                  type);
-        error = EAFNOSUPPORT;
-        goto exit;
-    }
-
-    error = registered_class->dpif_class->open(registered_class->dpif_class, name, create, &dpif);
-    if (!error) {
-
-    } else {
-
-    }
-
-exit:
-    *dpifp = error ? NULL : dpif;
-    return error;
-}
-
-int
-p4rt_dpif_open(const char *name, const char *type, struct p4rt_dpif **dpifp)
-{
-    return do_open(name, type, false, dpifp);
-}
-
-int
-p4rt_dpif_create(const char *name, const char *type, struct p4rt_dpif **dpifp)
-{
-    return do_open(name, type, true, dpifp);
-}
-
-static int
-dpif_create_and_open(const char *name, const char *type, struct p4rt_dpif **dpifp)
-{
-    int error;
-    error = p4rt_dpif_create(name, type, dpifp);
-    if (error == EEXIST || error == EBUSY) {
-        error = p4rt_dpif_open(name, type, dpifp);
-        if (error) {
-            VLOG_WARN("datapath %s already exists but cannot be opened: %s",
-                      name, ovs_strerror(error));
-        }
-    } else if (error) {
-        VLOG_WARN("failed to create datapath %s: %s",
-                  name, ovs_strerror(error));
-    }
+    struct p4rt_dpif *p4rt = p4rt_dpif_cast(p4rt_);
+    free(p4rt);
 }
 
 static int
@@ -253,25 +153,25 @@ p4rt_dpif_construct(struct p4rt *p4rt_)
 static int
 p4rt_dpif_delete(struct p4rt_dpif *dpif)
 {
-    return dpif->
+    return 0;
 }
 
 static void
 close_p4rt_dpif_backer(struct p4rt_dpif_backer *backer, bool del)
 {
-    ovs_assert(backer->refcount > 0);
-
-    if (--backer->refcount) {
-        return;
-    }
+//    ovs_assert(backer->refcount > 0);
+//
+//    if (--backer->refcount) {
+//        return;
+//    }
 
     shash_find_and_delete(&all_p4rt_dpif_backers, backer->type);
     free(backer->type);
 
     if (del) {
-        p4rt_dpif_delete(backer->dpif);
+        dpif_delete(backer->dpif);
     }
-    p4rt_dpif_close(backer->dpif);
+    dpif_close(backer->dpif);
 
     free(backer);
 }
@@ -286,13 +186,25 @@ p4rt_dpif_destruct(struct p4rt *p4rt_, bool del)
 static int
 p4rt_dpif_port_add(struct p4rt *p, struct netdev *netdev)
 {
-    int error;
     struct p4rt_dpif *p4rt = p4rt_dpif_cast(p);
     const char *devname = netdev_get_name(netdev);
+    char namebuf[NETDEV_VPORT_NAME_BUFSIZE];
+    const char *dp_port_name;
 
-//    error = dpif_port_add(p4rt->backer->dpif, netdev, &port_no);
+    dp_port_name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
+    if (!dpif_port_exists(p4rt->backer->dpif, dp_port_name)) {
+        VLOG_INFO("Port does not exist!");
+        odp_port_t port_no = ODPP_NONE;
+        int error;
 
-    return error;
+        error = dpif_port_add(p4rt->backer->dpif, netdev, &port_no);
+        if (error) {
+            return error;
+        }
+    }
+    VLOG_INFO("Port exists!");
+
+    return 0;
 }
 
 const struct p4rt_class p4rt_dpif_class = {

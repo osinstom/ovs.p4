@@ -1,5 +1,6 @@
 #include <config.h>
 #include <errno.h>
+#include <string.h>
 
 #include "p4rt.h"
 #include "p4rt-provider.h"
@@ -72,7 +73,7 @@ p4rt_port_open_type(const struct p4rt *p4rt, const char *port_type)
 {
     VLOG_INFO("P4rt opening type: %s", port_type);
 
-    if (strcmp(port_type, "internal")) {
+    if (!strcmp(port_type, "internal")) {
         return "tap";
     }
 

@@ -1,13 +1,14 @@
 #ifndef P4RT_DPIF_H
 #define P4RT_DPIF_H
 
+#include "lib/dpif-provider.h"
 #include "p4rt-provider.h"
 #include "lib/uuid.h"
 
 /* All datapaths of a given type share a single dpif backer instance. */
 struct p4rt_dpif_backer {
     char *type;
-    struct p4rt_dpif *dpif;
+    struct dpif *dpif;
 };
 
 struct p4rt_dpif {
