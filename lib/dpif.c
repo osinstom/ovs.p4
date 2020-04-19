@@ -343,7 +343,8 @@ do_open(const char *name, const char *type, bool create, struct dpif **dpifp)
         error = EAFNOSUPPORT;
         goto exit;
     }
-
+    VLOG_INFO("Opening datapath of type: %s", type);
+    VLOG_INFO("Is ubpf class ? %d", registered_class->dpif_class == &dpif_ubpf_class);
     error = registered_class->dpif_class->open(registered_class->dpif_class,
                                                name, create, &dpif);
     if (!error) {

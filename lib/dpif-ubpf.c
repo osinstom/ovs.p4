@@ -1,13 +1,17 @@
 #include <config.h>
 #include <errno.h>
-#include "dpif-ubpf.h"
+
 
 #include "dpif-netdev.h"
-#include "p4rt/p4rt-dpif-provider.h"
+#include "dpif-ubpf.h"
 #include "dpif-provider.h"
-#include "ovs-atomic.h"
+#include "netdev-vport.h"
+#include "odp-util.h"
 #include "openvswitch/shash.h"
+#include "openvswitch/util.h"
 #include "openvswitch/vlog.h"
+#include "ovs-atomic.h"
+
 
 VLOG_DEFINE_THIS_MODULE(dpif_ubpf);
 
@@ -22,6 +26,7 @@ struct dp_ubpf {
     const struct dpif_class *const class;
     const char *const name;
     struct ovs_refcount ref_cnt;
+    struct dp_netdev *dp_netdev;
 };
 
 /* Interface to ubpf-based datapath. */
@@ -30,29 +35,47 @@ struct dpif_ubpf {
     struct dp_ubpf *dp;
 };
 
+static struct dpif_ubpf *
+dpif_ubpf_cast(const struct dpif *dpif)
+{
+    return CONTAINER_OF(dpif, struct dpif_ubpf, dpif);
+}
+
 static int
 dpif_ubpf_init(void) {
     VLOG_INFO("uBPF datapath initialized");
     return 0;
 }
 
+static int
+dpif_ubpf_enumerate(struct sset *all_dps, const struct dpif_class *dpif_class)
+{
+    return dpif_netdev_enumerate(all_dps, dpif_class);
+}
+
 static const char *
 dpif_ubpf_port_open_type(const struct dpif_class *class, const char *type)
 {
     VLOG_INFO("Returning port open type");
-    return "tap";
+    return dpif_netdev_port_open_type(class, type);
 }
+
+//static void
+//dpif_set_from_netdev(struct dpif *dpif, )
+//{
+//
+//}
 
 static struct dpif *
 create_dpif_ubpf(struct dp_ubpf *dp)
 {
-    uint16_t netflow_id = hash_string(dp->name, 0);
     struct dpif_ubpf *dpif;
 
     ovs_refcount_ref(&dp->ref_cnt);
 
     dpif = xmalloc(sizeof *dpif);
-    dpif_init(&dpif->dpif, dp->class, dp->name, netflow_id >> 8, netflow_id);
+
+    dpif->dpif = *create_dpif_netdev(dp->dp_netdev);
     dpif->dp = dp;
 
     return &dpif->dpif;
@@ -61,15 +84,25 @@ create_dpif_ubpf(struct dp_ubpf *dp)
 static int
 create_dp_ubpf(const char *name, const struct dpif_class *class,
         struct dp_ubpf **dpp)
-    OVS_REQUIRES(dp_ubpf_mutex)
+//    OVS_REQUIRES(dp_ubpf_mutex)
 {
+    VLOG_INFO("Create dp ubpf");
     struct dp_ubpf *dp;
 
     dp = xzalloc(sizeof *dp);
+
+    int error = create_dp_netdev(name, class, &dp->dp_netdev);
+    if (error) {
+        VLOG_INFO("Error creating dp netdev");
+        free(dp);
+        return error;
+    }
+
     shash_add(&dp_ubpfs, name, dp);
 
     *CONST_CAST(const struct dpif_class **, &dp->class) = class;
     *CONST_CAST(const char **, &dp->name) = xstrdup(name);
+
     ovs_refcount_init(&dp->ref_cnt);
 
     *dpp = dp;
@@ -77,12 +110,13 @@ create_dp_ubpf(const char *name, const struct dpif_class *class,
 }
 
 static int
-dpif_ubpf_open(const struct p4rt_dpif_class *class,
+dpif_ubpf_open(const struct dpif_class *class,
                const char *name, bool create, struct dpif **dpifp)
 {
     VLOG_INFO("Opening uBPF");
     int error;
     struct dp_ubpf *dp;
+
     ovs_mutex_lock(&dp_ubpf_mutex);
     dp = shash_find_data(&dp_ubpfs, name);
     if (!dp) {
@@ -126,12 +160,24 @@ dpif_ubpf_wait(struct dpif *dpif)
     VLOG_INFO("Waiting uBPF");
 }
 
+
+
 static int
 dpif_ubpf_port_query_by_name(const struct dpif *dpif, const char *devname,
-                             struct dpif_port *port)
+                             struct dpif_port *dpif_port)
 {
-    // FIXME: make a lookup
-    return ENODEV;
+    struct dp_netdev *dp = dpif_ubpf_cast(dpif)->dp->dp_netdev;
+    int error;
+    struct dp_netdev_port *port;
+
+    ovs_mutex_lock(&dp->port_mutex);
+    error = get_port_by_name(dp, devname, &port);
+    if (!error && dpif_port) {
+        answer_port_query(port, dpif_port);
+    }
+    ovs_mutex_unlock(&dp->port_mutex);
+
+    return error;
 }
 
 static int
@@ -172,10 +218,51 @@ dpif_ubpf_get_stats(const struct dpif *dpif, struct dpif_dp_stats *stats)
     return 0;
 }
 
-static int
-dpif_ubpf_port_add(struct dpif *dpif, odp_port_t port_no)
+static odp_port_t
+ubpf_choose_port(struct dp_netdev *dp, const char *name)
+    OVS_REQUIRES(dp->port_mutex)
 {
-    return 0;
+    uint32_t port_no;
+
+    for (port_no = 1; port_no <= UINT16_MAX; port_no++) {
+        if (!dp_netdev_lookup_port(dp, u32_to_odp(port_no))) {
+            return u32_to_odp(port_no);
+        }
+    }
+
+    return ODPP_NONE;
+}
+
+static int
+dpif_ubpf_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_nop)
+{
+    struct dp_netdev *dp = dpif_ubpf_cast(dpif)->dp->dp_netdev;
+    const char *dpif_port;
+    char namebuf[NETDEV_VPORT_NAME_BUFSIZE];
+    odp_port_t port_no;
+    int error;
+
+    dpif_port = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
+    const char *type = netdev_get_type(netdev);
+
+
+    ovs_mutex_lock(&dp->port_mutex);
+    dpif_port = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
+    if (*port_nop != ODPP_NONE) {
+        port_no = *port_nop;
+        error = dp_netdev_lookup_port(dp, *port_nop) ? EBUSY : 0;
+    } else {
+        port_no = ubpf_choose_port(dp, dpif_port);
+        error = port_no == ODPP_NONE ? EFBIG : 0;
+    }
+    VLOG_INFO("Adding port %s %s, port_no=%d", dpif_port, type, port_no);
+    if (!error) {
+        *port_nop = port_no;
+        error = do_add_port(dp, dpif_port, netdev_get_type(netdev), port_no);
+    }
+    ovs_mutex_unlock(&dp->port_mutex);
+
+    return error;
 }
 
 static struct dpif_flow_dump *
@@ -191,7 +278,7 @@ const struct dpif_class dpif_ubpf_class = {
         "ubpf",
         true,
         dpif_ubpf_init,
-        dpif_ubpf_open,
+        dpif_ubpf_enumerate,
         dpif_ubpf_port_open_type,
         dpif_ubpf_open,
         dpif_ubpf_close,
@@ -264,13 +351,13 @@ const struct dpif_class dpif_ubpf_class = {
 };
 
 void
-dpif_ubpf_register()
+dpif_ubpf_register()  //TODO: to remove
 {
     VLOG_INFO("Registering uBPF datapath type");
-    struct dpif_class *class;
-    class = xmalloc(sizeof *class);
-    *class = dpif_ubpf_class;
-    class->type = xstrdup("ubpf");
-    dp_register_provider(class);
+//    struct dpif_class *class;
+//    class = xmalloc(sizeof *class);
+//    *class = dpif_ubpf_class;
+//    class->type = xstrdup("ubpf");
+//    dp_register_provider(class);
     VLOG_INFO("uBPF datapath type registered successfully");
 }

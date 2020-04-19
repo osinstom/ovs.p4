@@ -3,8 +3,8 @@
 #include "lib/dpif.h"
 #include "lib/netdev-vport.h"
 #include "lib/odp-util.h"
+#include "p4rt.h"
 #include "p4rt-dpif.h"
-#include "p4rt-dpif-provider.h"
 #include "p4rt-provider.h"
 #include "openvswitch/vlog.h"
 #include "openvswitch/shash.h"
@@ -12,13 +12,15 @@
 
 VLOG_DEFINE_THIS_MODULE(p4rt_dpif);
 
-static const struct dpif_class *base_dpif_classes[] = {
-        &dpif_ubpf_class,
-};
+//static const struct dpif_class *base_dpif_classes[] = {
+//        &dpif_ubpf_class,
+//};
 
-struct registered_dpif_class {
-    const struct p4rt_dpif_class *dpif_class;
-    int refcount;
+struct p4port_dpif {
+    struct hmap_node node;
+    struct p4port up;
+
+    odp_port_t odp_port;
 };
 
 static struct shash p4rt_dpif_classes = SHASH_INITIALIZER(&p4rt_dpif_classes);
@@ -30,25 +32,17 @@ struct shash all_p4rt_dpif_backers = SHASH_INITIALIZER(&all_p4rt_dpif_backers);
 static struct ovs_mutex p4rt_dpif_mutex = OVS_MUTEX_INITIALIZER;
 
 
+static struct p4port_dpif *
+p4port_dpif_cast(const struct p4port *p4port)
+{
+    return p4port ? CONTAINER_OF(p4port, struct p4port_dpif, up) : NULL;
+}
+
 static inline struct p4rt_dpif *
 p4rt_dpif_cast(const struct p4rt *p4rt)
 {
     ovs_assert(p4rt->p4rt_class == &p4rt_dpif_class);
     return CONTAINER_OF(p4rt, struct p4rt_dpif, up);
-}
-
-static struct registered_dpif_class *
-dp_class_lookup(const char *type)
-{
-    VLOG_INFO("Type: %s", type);
-    struct registered_dpif_class *rc;
-    ovs_mutex_lock(&p4rt_dpif_mutex);
-    rc = shash_find_data(&p4rt_dpif_classes, type);
-    if (rc) {
-        rc->refcount++;
-    }
-    ovs_mutex_unlock(&p4rt_dpif_mutex);
-    return rc;
 }
 
 static void
@@ -57,12 +51,7 @@ dp_initialize(void)
     static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
 
     if (ovsthread_once_start(&once)) {
-        int i;
-
-        for (i = 0; i < ARRAY_SIZE(base_dpif_classes); i++) {
-            dp_register_provider(base_dpif_classes[i]);
-        }
-
+        dp_register_provider(&dpif_ubpf_class);
         ovsthread_once_done(&once);
     }
 }
@@ -71,6 +60,7 @@ void
 p4rt_dpif_init()
 {
     VLOG_INFO("Initializing P4rt Dpif");
+    dp_initialize();
 }
 
 const char *
@@ -88,7 +78,8 @@ p4rt_dpif_enumerate_types(struct sset *types)
 static int
 p4rt_dpif_type_run(const char *type)
 {
-    VLOG_INFO("p4rt_dpif_type_run");
+//    VLOG_INFO("p4rt_dpif_type_run");
+    return 0;
 }
 
 static struct p4rt *
@@ -126,9 +117,12 @@ open_p4rt_dpif_backer(const char *type, struct p4rt_dpif_backer **backerp)
 
     backer->type = xstrdup(type);
 
-    shash_add(&all_p4rt_dpif_backers, type, backer);
+    hmap_init(&backer->odp_to_p4port_map);
+    ovs_rwlock_init(&backer->odp_to_p4port_lock);
 
     *backerp = backer;
+
+    shash_add(&all_p4rt_dpif_backers, type, backer);
     return error;
 }
 
@@ -183,6 +177,78 @@ p4rt_dpif_destruct(struct p4rt *p4rt_, bool del)
     close_p4rt_dpif_backer(p4rt->backer, del);
 }
 
+/* ## ---------------- ## */
+/* ##      START       ## */
+/* ## p4port Functions ## */
+/* ## ---------------- ## */
+
+static struct p4port *
+p4rt_dpif_port_alloc(void)
+{
+    struct p4port_dpif *port = xzalloc(sizeof *port);
+    return &port->up;
+}
+
+static int
+p4rt_dpif_port_construct(struct p4port *p4port_)
+{
+    struct p4port_dpif *port = p4port_dpif_cast(p4port_);
+    struct p4rt_dpif *p4rt = p4rt_dpif_cast(port->up.p4rt);
+    const struct netdev *netdev = port->up.netdev;
+    char namebuf[NETDEV_VPORT_NAME_BUFSIZE];
+    const char *dp_port_name;
+    struct dpif_port dpif_port;
+    int error;
+
+    dp_port_name = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
+    error = dpif_port_query_by_name(p4rt->backer->dpif, dp_port_name,
+                                    &dpif_port);
+    if (error) {
+        return error;
+    }
+
+    port->odp_port = dpif_port.port_no;
+
+    ovs_rwlock_wrlock(&p4rt->backer->odp_to_p4port_lock);
+    hmap_insert(&p4rt->backer->odp_to_p4port_map, &port->node,
+                hash_odp_port(port->odp_port));
+    ovs_rwlock_unlock(&p4rt->backer->odp_to_p4port_lock);
+
+    dpif_port_destroy(&dpif_port);
+
+    return 0;
+}
+
+/* ## ---------------- ## */
+/* ##      END         ## */
+/* ## p4port Functions ## */
+/* ## ---------------- ## */
+
+static void
+p4rt_port_from_dpif_port(struct p4rt_dpif *p4rt, struct p4rt_port *port, struct dpif_port *dpif_port)
+{
+    port->name = dpif_port->name;
+    port->type = dpif_port->type;
+    port->port_no = dpif_port->port_no;
+}
+
+static int
+p4rt_dpif_port_query_by_name(const struct p4rt *p4rt_, const char *devname, struct p4rt_port *port)
+{
+    struct p4rt_dpif *p4rt = p4rt_dpif_cast(p4rt_);
+    int error;
+    struct dpif_port dpif_port;
+
+    error = dpif_port_query_by_name(p4rt->backer->dpif,
+                                    devname, &dpif_port);
+    VLOG_INFO("Query dpif %s, Success? %d", devname, error);
+    if (!error) {
+        VLOG_INFO("Port from dpif: %s, %s", dpif_port.name, dpif_port.type);
+        p4rt_port_from_dpif_port(p4rt, port, &dpif_port);
+    }
+    return error;
+}
+
 static int
 p4rt_dpif_port_add(struct p4rt *p, struct netdev *netdev)
 {
@@ -202,7 +268,6 @@ p4rt_dpif_port_add(struct p4rt *p, struct netdev *netdev)
             return error;
         }
     }
-    VLOG_INFO("Port exists!");
 
     return 0;
 }
@@ -216,6 +281,11 @@ const struct p4rt_class p4rt_dpif_class = {
     p4rt_dpif_construct,
     p4rt_dpif_destruct,
     p4rt_dpif_dealloc,
+    p4rt_dpif_port_alloc,
+    p4rt_dpif_port_construct,
+    NULL,
+    NULL,
+    p4rt_dpif_port_query_by_name,
     p4rt_dpif_port_add,
 };
 

@@ -9,6 +9,17 @@ struct p4rt {
 
     char *type;                 /* Datapath type. */
     char *name;                 /* Datapath name. */
+
+    /* Datapath. */
+    struct hmap ports;          /* Contains "struct p4port"s. */
+};
+
+struct p4port {
+    struct hmap_node hmap_node; /* In struct p4rt's "ports" hmap. */
+    struct p4rt *p4rt;          /* The p4rt that contains this port. */
+    struct netdev *netdev;
+    ofp_port_t port_no;         /* P4Runtime port number. */
+    long long int created;      /* Time created, in msec. */
 };
 
 struct p4rt_class {
@@ -49,6 +60,23 @@ struct p4rt_class {
     void (*destruct)(struct p4rt *p4rt, bool del);
     void (*dealloc)(struct p4rt *p4rt);
 
+/* ## ---------------- ## */
+/* ## p4port Functions ## */
+/* ## ---------------- ## */
+
+    struct p4port *(*port_alloc)(void);
+    int (*port_construct)(struct p4port *p4port);
+    void (*port_destruct)(struct p4port *p4port, bool del);
+    void (*port_dealloc)(struct p4port *p4port);
+
+    /* Looks up a port named 'devname' in 'p4rt'.  On success, returns 0 and
+     * initializes '*port' appropriately. Otherwise, returns a positive errno
+     * value.
+     *
+     * The caller owns the data in 'port' and must free it with
+     * p4rt_port_destroy() when it is no longer needed. */
+    int (*port_query_by_name)(const struct p4rt *p4rt,
+                              const char *devname, struct p4rt_port *port);
 
     /* Attempts to add 'netdev' as a port on 'p4rt'.  Returns 0 if
      * successful, otherwise a positive errno value.  The caller should
@@ -59,6 +87,10 @@ struct p4rt_class {
      * to ->port_poll(); the implementation may do whatever is more
      * convenient. */
     int (*port_add)(struct p4rt *p, struct netdev *netdev);
+
+
+
+
 };
 
 extern const struct p4rt_class p4rt_dpif_class;

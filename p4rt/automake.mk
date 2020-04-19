@@ -10,8 +10,7 @@ p4rt_libp4rt_la_SOURCES = \
     p4rt/p4rt.h \
     p4rt/p4rt-dpif.c \
     p4rt/p4rt-dpif.h \
-    p4rt/p4rt-provider.h \
-    p4rt/p4rt-dpif-provider.h
+    p4rt/p4rt-provider.h
 
 p4rt_libp4rt_la_CPPFLAGS = $(AM_CPPFLAGS)
 p4rt_libp4rt_la_CFLAGS = $(AM_CFLAGS)

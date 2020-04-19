@@ -823,6 +823,9 @@ static void
 bridge_configure_p4rt(struct bridge *br)
 {
     VLOG_INFO("Configuring P4rt bridge");
+    char *dpid_string = xasprintf("%016"PRIx64, 0);;
+    ovsrec_bridge_set_datapath_id(br->cfg, dpid_string);
+    free(dpid_string);
 }
 
 static void
@@ -2097,14 +2100,14 @@ iface_do_create(const struct bridge *br,
         error = ofproto_port_add(br->ofproto, netdev, ofp_portp);
     } else {
         error = p4rt_port_add(br->p4rt, netdev, ofp_portp);
-        VLOG_INFO("P4rt port add finished. Error=%d", error);
+        VLOG_INFO("P4rt port (name=%s, no=%d) add finished. Error=%d", iface_cfg->name, *ofp_portp, error);
     }
 
     if (error) {
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
-        *errp = xasprintf("could not add network device %s to ofproto (%s)",
-                          iface_cfg->name, ovs_strerror(error));
+        *errp = xasprintf("could not add network device %s to %s (%s)",
+                          iface_cfg->name, br->p4 ? "p4rt" : "ofproto", ovs_strerror(error));
         if (!VLOG_DROP_WARN(&rl)) {
             VLOG_WARN("%s", *errp);
         }

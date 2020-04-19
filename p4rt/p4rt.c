@@ -144,6 +144,7 @@ p4rt_create(const char *datapath_name, const char *datapath_type,
     p4rt->type = xstrdup(datapath_type);
     hmap_insert(&all_p4rts, &p4rt->hmap_node,
                 hash_string(p4rt->name, 0));
+    hmap_init(&p4rt->ports);
 //    ovs_mutex_unlock(&p4rt_mutex);
 
     error = p4rt->p4rt_class->construct(p4rt);
@@ -162,6 +163,7 @@ p4rt_destroy__(struct p4rt *p)
 
     free(p->name);
     free(p->type);
+    hmap_destroy(&p->ports);
 }
 
 static void
@@ -200,28 +202,180 @@ p4rt_type_run(const char *datapath_type)
     return error;
 }
 
-//int
-//p4rt_port_add(struct p4rt *p, struct netdev *netdev, ofp_port_t *ofp_portp)
-//{
-//    ofp_port_t ofp_port = ofp_portp ? *ofp_portp : 0xffff;  // 0xffff = OFPP_NONE
-//    int error;
-//
-//    error = p->p4rt_class->port_add(p, netdev);
-//    if (!error) {
-//        VLOG_INFO("Port added successful");
-//    }
-//
-//    return error;
-//}
+int
+p4rt_port_query_by_name(struct p4rt *p4rt, const char *name, struct p4rt_port *portp)
+{
+    int error;
+    error = p4rt->p4rt_class->port_query_by_name(p4rt, name, portp);
+    if (error) {
+        memset(portp, 0, sizeof *portp);
+    }
+    return error;
+}
+
+static ofp_port_t
+alloc_p4rt_port(struct p4rt *p4rt, const char *netdev_name)
+{
+    // TODO: get next port number from the pool.
+    return 1;
+}
+
+static int
+p4rt_port_open(struct p4rt *p4rt,
+               struct p4rt_port *p4port,
+               struct netdev **p_netdev)
+{
+    int error;
+    struct netdev *netdev;
+
+    *p_netdev = NULL;
+    error = netdev_open(p4port->name, p4port->type, &netdev);
+    if (error) {
+        VLOG_WARN_RL(&rl, "%s: ignoring port %s (%"PRIu32") because netdev %s "
+                                                         "cannot be opened (%s)",
+                p4port->name,
+                p4port->name, p4port->port_no,
+                p4port->name, ovs_strerror(error));
+        return 0;
+    }
+
+    if (p4port->port_no == OFPP_NONE) {
+        if (!strcmp(p4rt->name, p4port->name)) {
+            p4port->port_no = OFPP_LOCAL;
+        } else {
+            ofp_port_t port_no = alloc_p4rt_port(p4rt, p4port->name);
+            if (port_no == OFPP_NONE) {
+                VLOG_WARN_RL(&rl, "%s: failed to allocate port number "
+                                  "for %s.", p4rt->name, p4port->name);
+                netdev_close(netdev);
+                return ENOSPC;
+            }
+            p4port->port_no = port_no;
+        }
+    }
+
+    *p_netdev = netdev;
+    return 0;
+}
+
+struct p4port *
+p4rt_get_port(const struct p4rt *p4rt, ofp_port_t port_no)
+{
+    struct p4port *port;
+
+    HMAP_FOR_EACH_IN_BUCKET (port, hmap_node, hash_ofp_port(port_no),
+                             &p4rt->ports) {
+        if (port->port_no == port_no) {
+            return port;
+        }
+    }
+
+    return NULL;
+}
+
+static int
+p4rt_port_install(struct p4rt *p4rt, struct netdev *netdev, ofp_port_t port_no)
+{
+    const char *netdev_name = netdev_get_name(netdev);
+    struct p4port *p4port;
+    int error;
+
+    /* Create p4port. */
+    p4port = p4rt->p4rt_class->port_alloc();
+    if (!p4port) {
+        error = ENOMEM;
+        goto error;
+    }
+
+    p4port->p4rt = p4rt;
+    p4port->netdev = netdev;
+    p4port->port_no = port_no;
+    p4port->created = time_msec();
+
+    /* Add port to 'p'. */
+    hmap_insert(&p4rt->ports, &p4port->hmap_node,
+                hash_ofp_port(p4port->port_no));
+
+    /* Let the p4rt_class initialize its private data. */
+    error = p4rt->p4rt_class->port_construct(p4port);
+    if (error) {
+        goto error;
+    }
+
+    return 0;
+
+error:
+    VLOG_WARN_RL(&rl, "%s: could not add port %s (%s)",
+                 p4rt->name, netdev_name, ovs_strerror(error));
+    if (p4port) {
+        // TODO: implement p4port destroy
+        // p4port_destroy__(p4port);
+    } else {
+        netdev_close(netdev);
+    }
+    return error;
+}
+
+static int
+update_port(struct p4rt *p4rt, const char *name)
+{
+    struct p4rt_port p4rt_port;
+    struct netdev *netdev;
+    struct p4port *port;
+    int error = 0;
+    VLOG_INFO("Updating port %s", name);
+    /* Fetch 'name''s location and properties from the datapath. */
+    if (p4rt_port_query_by_name(p4rt, name, &p4rt_port)) {
+        netdev = NULL;
+    } else {
+        error = p4rt_port_open(p4rt, &p4rt_port, &netdev);
+    }
+
+    if (netdev) {
+        port = p4rt_get_port(p4rt, p4rt_port.port_no);
+        if (port && !strcmp(netdev_get_name(port->netdev), name)) {
+
+        } else {
+            if (port) {
+                // TODO: should remove port here.
+            }
+            error = p4rt_port_install(p4rt, netdev, p4rt_port.port_no);
+        }
+    }
+    // TODO: should destroy p4rt_port here
+
+    return error;
+}
 
 int p4rt_port_add(struct p4rt *p, struct netdev *netdev, ofp_port_t *ofp_portp)
 {
+    VLOG_INFO("Wants to add port %d", ofp_portp ? *ofp_portp : 0);
     ofp_port_t ofp_port = ofp_portp ? *ofp_portp : 0xffff;  // 0xffff = OFPP_NONE
     int error;
 
     error = p->p4rt_class->port_add(p, netdev);
     if (!error) {
-        VLOG_INFO("Port added successful");
+        const char *netdev_name = netdev_get_name(netdev);
+        error = update_port(p, netdev_name);
+        VLOG_INFO("Port added successful, error=%d", error);
+    }
+
+    if (ofp_portp) {
+        VLOG_INFO("Port updated.");
+        *ofp_portp = OFPP_NONE;
+        if (!error) {
+            struct p4rt_port p4rt_port;
+
+            error = p4rt_port_query_by_name(p,
+                    netdev_get_name(netdev),
+                    &p4rt_port);
+
+            if (!error) {
+                *ofp_portp = p4rt_port.port_no;
+                // TODO: destroy p4rt port
+                //p4rt_port_destroy(&p4rt_port);
+            }
+        }
     }
 
     return error;
