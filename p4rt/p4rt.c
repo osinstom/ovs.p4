@@ -25,6 +25,14 @@ static size_t allocated_p4rt_classes;
 
 static void p4rt_p4port_destroy(struct p4port *, bool del);
 
+static void
+p4rt_port_destroy(struct p4rt_port *port)
+{
+    free(port->name);
+    free(port->type);
+}
+
+
 static const struct p4rt_class *
 p4rt_class_find__(const char *type)
 {
@@ -403,7 +411,7 @@ int p4rt_port_add(struct p4rt *p, struct netdev *netdev, ofp_port_t *ofp_portp)
             if (!error) {
                 *ofp_portp = p4rt_port.port_no;
                 // TODO: destroy p4rt port
-                //p4rt_port_destroy(&p4rt_port);
+                p4rt_port_destroy(&p4rt_port);
             }
         }
     }
