@@ -820,7 +820,7 @@ datapath_reconfigure(const struct ovsrec_open_vswitch *cfg)
 }
 
 static void
-bridge_configure_p4rt(struct bridge *br)
+bridge_configure_p4rt_datapath_id(struct bridge *br)
 {
     VLOG_INFO("Configuring P4rt bridge");
     char *dpid_string = xasprintf("%016"PRIx64, 0);;
@@ -914,7 +914,6 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
                 VLOG_ERR("failed to create bridge %s: %s", br->name,
                          ovs_strerror(error));
                 bridge_destroy(br, true);
-                // TODO: destroy bridge here
             }
         }
     }
@@ -933,48 +932,54 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
     sflow_bridge_number = 0;
     collect_in_band_managers(ovs_cfg, &managers, &n_managers);
     HMAP_FOR_EACH (br, node, &all_bridges) {
-        if (br->p4) {
-            bridge_configure_p4rt(br);
-            continue;
-        }
         struct port *port;
 
         /* We need the datapath ID early to allow LACP ports to use it as the
          * default system ID. */
-        bridge_configure_datapath_id(br);
+        if (!br->p4) {
+            bridge_configure_datapath_id(br);
+        } else {
+            bridge_configure_p4rt_datapath_id(br);
+        }
 
         HMAP_FOR_EACH (port, hmap_node, &br->ports) {
             struct iface *iface;
 
-            port_configure(port);
+            if (!br->p4) {
+                port_configure(port);
+            }
 
             LIST_FOR_EACH (iface, port_elem, &port->ifaces) {
                 iface_set_ofport(iface->cfg, iface->ofp_port);
                 /* Clear eventual previous errors */
                 ovsrec_interface_set_error(iface->cfg, NULL);
-                iface_configure_cfm(iface);
-                iface_configure_qos(iface, port->cfg->qos);
-                iface_set_mac(br, port, iface);
-                ofproto_port_set_bfd(br->ofproto, iface->ofp_port,
-                                     &iface->cfg->bfd);
-                ofproto_port_set_lldp(br->ofproto, iface->ofp_port,
-                                      &iface->cfg->lldp);
-                ofproto_port_set_config(br->ofproto, iface->ofp_port,
-                                        &iface->cfg->other_config);
+                if (!br->p4) {
+                    iface_configure_cfm(iface);
+                    iface_configure_qos(iface, port->cfg->qos);
+                    iface_set_mac(br, port, iface);
+                    ofproto_port_set_bfd(br->ofproto, iface->ofp_port,
+                                         &iface->cfg->bfd);
+                    ofproto_port_set_lldp(br->ofproto, iface->ofp_port,
+                                          &iface->cfg->lldp);
+                    ofproto_port_set_config(br->ofproto, iface->ofp_port,
+                                            &iface->cfg->other_config);
+                }
             }
         }
-        bridge_configure_mirrors(br);
-        bridge_configure_forward_bpdu(br);
-        bridge_configure_mac_table(br);
-        bridge_configure_mcast_snooping(br);
-        bridge_configure_remotes(br, managers, n_managers);
-        bridge_configure_netflow(br);
-        bridge_configure_sflow(br, &sflow_bridge_number);
-        bridge_configure_ipfix(br);
-        bridge_configure_spanning_tree(br);
-        bridge_configure_tables(br);
-        bridge_configure_dp_desc(br);
-        bridge_configure_aa(br);
+        if (!br->p4) {
+            bridge_configure_mirrors(br);
+            bridge_configure_forward_bpdu(br);
+            bridge_configure_mac_table(br);
+            bridge_configure_mcast_snooping(br);
+            bridge_configure_remotes(br, managers, n_managers);
+            bridge_configure_netflow(br);
+            bridge_configure_sflow(br, &sflow_bridge_number);
+            bridge_configure_ipfix(br);
+            bridge_configure_spanning_tree(br);
+            bridge_configure_tables(br);
+            bridge_configure_dp_desc(br);
+            bridge_configure_aa(br);
+        }
     }
     free(managers);
 
