@@ -174,6 +174,9 @@ static void
 p4rt_dpif_destruct(struct p4rt *p4rt_, bool del)
 {
     struct p4rt_dpif *p4rt = p4rt_dpif_cast(p4rt_);
+
+
+
     close_p4rt_dpif_backer(p4rt->backer, del);
 }
 
@@ -217,6 +220,38 @@ p4rt_dpif_port_construct(struct p4port *p4port_)
     dpif_port_destroy(&dpif_port);
 
     return 0;
+}
+
+static void
+p4rt_dpif_port_destruct(struct p4port *port_, bool del)
+{
+    struct p4port_dpif *port = p4port_dpif_cast(port_);
+    struct p4rt_dpif *p4rt = p4rt_dpif_cast(port->up.p4rt);
+    const char *devname = netdev_get_name(port->up.netdev);
+    const char *netdev_type = netdev_get_type(port->up.netdev);
+    char namebuf[NETDEV_VPORT_NAME_BUFSIZE];
+    const char *dp_port_name;
+
+    dp_port_name = netdev_vport_get_dpif_port(port->up.netdev, namebuf,
+                                              sizeof namebuf);
+    if (del && dpif_port_exists(p4rt->backer->dpif, dp_port_name)) {
+        dpif_port_del(p4rt->backer->dpif, port->odp_port, false);
+    } else if (del) {
+        dpif_port_del(p4rt->backer->dpif, port->odp_port, true);
+    }
+
+    if (port->odp_port != ODPP_NONE) {
+        ovs_rwlock_wrlock(&p4rt->backer->odp_to_p4port_lock);
+        hmap_remove(&p4rt->backer->odp_to_p4port_map, &port->node);
+        ovs_rwlock_unlock(&p4rt->backer->odp_to_p4port_lock);
+    }
+}
+
+static void
+p4rt_dpif_port_dealloc(struct p4port *p4port)
+{
+    struct p4port_dpif *port = p4port_dpif_cast(p4port);
+    free(port);
 }
 
 /* ## ---------------- ## */
@@ -283,8 +318,8 @@ const struct p4rt_class p4rt_dpif_class = {
     p4rt_dpif_dealloc,
     p4rt_dpif_port_alloc,
     p4rt_dpif_port_construct,
-    NULL,
-    NULL,
+    p4rt_dpif_port_destruct,
+    p4rt_dpif_port_dealloc,
     p4rt_dpif_port_query_by_name,
     p4rt_dpif_port_add,
 };

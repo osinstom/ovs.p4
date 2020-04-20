@@ -148,6 +148,11 @@ struct dp_netdev_port {
     char *rxq_affinity_list;    /* Requested affinity of rx queues. */
 };
 
+struct dp_netdev_port_state {
+    struct hmap_position position;
+    char *name;
+};
+
 /* Enough headroom to add a vlan tag, plus an extra 2 bytes to allow IP
  * headers to be aligned on a 4-byte boundary.  */
 enum { DP_NETDEV_HEADROOM = 2 + VLAN_HEADER_LEN };
@@ -163,6 +168,9 @@ struct dpif *create_dpif_netdev(struct dp_netdev *dp);
 int create_dp_netdev(const char *name, const struct dpif_class *class,
                  struct dp_netdev **dpp);
 
+int get_port_by_number(struct dp_netdev *dp, odp_port_t port_no,
+                       struct dp_netdev_port **portp)
+        OVS_REQUIRES(dp->port_mutex);
 int get_port_by_name(struct dp_netdev *dp, const char *devname, struct dp_netdev_port **portp)
         OVS_REQUIRES(dp->port_mutex);
 void answer_port_query(const struct dp_netdev_port *port, struct dpif_port *dpif_port);
@@ -173,6 +181,10 @@ struct dp_netdev_port *dp_netdev_lookup_port(const struct dp_netdev *dp, odp_por
 int do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
             odp_port_t port_no)
     OVS_REQUIRES(dp->port_mutex);
+void do_del_port(struct dp_netdev *dp, struct dp_netdev_port *port)
+    OVS_REQUIRES(dp->port_mutex);
+
+
 
 #define NR_QUEUE   1
 #define NR_PMD_THREADS 1

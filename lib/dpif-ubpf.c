@@ -183,19 +183,47 @@ dpif_ubpf_port_query_by_name(const struct dpif *dpif, const char *devname,
 static int
 dpif_ubpf_port_dump_start(const struct dpif *dpif, void **statep)
 {
+    *statep = xzalloc(sizeof(struct dp_netdev_port_state));
     return 0;
 }
 
 static int
-dpif_ubpf_port_dump_next(const struct dpif *dpif, void *state,
-                          struct dpif_port *port)
+dpif_ubpf_port_dump_next(const struct dpif *dpif, void *state_,
+                          struct dpif_port *dpif_port)
 {
-    return EOF;
+    struct dp_netdev_port_state *state = state_;
+    struct dp_netdev *dp = dpif_ubpf_cast(dpif)->dp->dp_netdev;
+    struct hmap_node *node;
+    int retval;
+
+    ovs_mutex_lock(&dp->port_mutex);
+    node = hmap_at_position(&dp->ports, &state->position);
+    if (node) {
+        struct dp_netdev_port *port;
+
+        port = CONTAINER_OF(node, struct dp_netdev_port, node);
+
+        free(state->name);
+        state->name = xstrdup(netdev_get_name(port->netdev));
+        dpif_port->name = state->name;
+        dpif_port->type = port->type;
+        dpif_port->port_no = port->port_no;
+
+        retval = 0;
+    } else {
+        retval = EOF;
+    }
+    ovs_mutex_unlock(&dp->port_mutex);
+
+    return retval;
 }
 
 static int
-dpif_ubpf_port_dump_done(const struct dpif *dpif, void *state)
+dpif_ubpf_port_dump_done(const struct dpif *dpif, void *state_)
 {
+    struct dp_netdev_port_state *state = state_;
+    free(state->name);
+    free(state);
     return 0;
 }
 
@@ -265,6 +293,28 @@ dpif_ubpf_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_no
     return error;
 }
 
+static int
+dpif_ubpf_port_del(struct dpif *dpif, odp_port_t port_no)
+{
+    struct dp_netdev *dp = dpif_ubpf_cast(dpif)->dp->dp_netdev;
+    int error;
+
+    ovs_mutex_lock(&dp->port_mutex);
+    if (port_no == ODPP_LOCAL) {
+        error = EINVAL;
+    } else {
+        struct dp_netdev_port *port;
+
+        error = get_port_by_number(dp, port_no, &port);
+        if (!error) {
+            do_del_port(dp, port);
+        }
+    }
+    ovs_mutex_unlock(&dp->port_mutex);
+
+    return error;
+}
+
 static struct dpif_flow_dump *
 dpif_ubpf_flow_dump_create(const struct dpif *dpif_, bool terse,
                            struct dpif_flow_dump_types *types OVS_UNUSED)
@@ -288,7 +338,7 @@ const struct dpif_class dpif_ubpf_class = {
         dpif_ubpf_get_stats,
         NULL,                      /* set_features */
         dpif_ubpf_port_add,
-        NULL,
+        dpif_ubpf_port_del,
         NULL,
         NULL,
         dpif_ubpf_port_query_by_name,

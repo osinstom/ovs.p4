@@ -23,6 +23,7 @@ static const struct p4rt_class **p4rt_classes;
 static size_t n_p4rt_classes;
 static size_t allocated_p4rt_classes;
 
+static void p4rt_p4port_destroy(struct p4port *, bool del);
 
 static const struct p4rt_class *
 p4rt_class_find__(const char *type)
@@ -176,9 +177,17 @@ p4rt_destroy_defer__(struct p4rt *p)
 void
 p4rt_destroy(struct p4rt *p, bool del)
 {
+    struct p4port *port, *next_port;
+
     if (!p) {
         return;
     }
+
+    HMAP_FOR_EACH_SAFE (port, next_port, hmap_node, &p->ports) {
+        p4rt_p4port_destroy(port, del);
+    }
+
+    p->p4rt_class->destruct(p, del);
 
     /* Destroying rules is deferred, must have 'p4rt' around for them. */
     ovsrcu_postpone(p4rt_destroy_defer__, p);
@@ -256,6 +265,27 @@ p4rt_port_open(struct p4rt *p4rt,
 
     *p_netdev = netdev;
     return 0;
+}
+
+static void
+p4port_destroy__(struct p4port *port)
+{
+    struct p4rt *p4rt = port->p4rt;
+    const char *name = netdev_get_name(port->netdev);
+
+    hmap_remove(&p4rt->ports, &port->hmap_node);
+
+    netdev_close(port->netdev);
+    p4rt->p4rt_class->port_dealloc(port);
+}
+
+static void
+p4rt_p4port_destroy(struct p4port *port, bool del)
+{
+    if (port) {
+        port->p4rt->p4rt_class->port_destruct(port, del);
+        p4port_destroy__(port);
+    }
 }
 
 struct p4port *

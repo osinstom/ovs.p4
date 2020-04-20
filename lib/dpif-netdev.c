@@ -676,13 +676,8 @@ struct dpif_netdev {
     uint64_t last_port_seq;
 };
 
-static int get_port_by_number(struct dp_netdev *dp, odp_port_t port_no,
-                              struct dp_netdev_port **portp)
-    OVS_REQUIRES(dp->port_mutex);
 static void dp_netdev_free(struct dp_netdev *)
     OVS_REQUIRES(dp_netdev_mutex);
-static void do_del_port(struct dp_netdev *dp, struct dp_netdev_port *)
-    OVS_REQUIRES(dp->port_mutex);
 static int dpif_netdev_open(const struct dpif_class *, const char *name,
                             bool create, struct dpif **);
 static void dp_netdev_execute_actions(struct dp_netdev_pmd_thread *pmd,
@@ -1865,7 +1860,7 @@ dp_netdev_lookup_port(const struct dp_netdev *dp, odp_port_t port_no)
     return NULL;
 }
 
-static int
+int
 get_port_by_number(struct dp_netdev *dp,
                    odp_port_t port_no, struct dp_netdev_port **portp)
     OVS_REQUIRES(dp->port_mutex)
@@ -1935,7 +1930,7 @@ has_pmd_port(struct dp_netdev *dp)
     return false;
 }
 
-static void
+void
 do_del_port(struct dp_netdev *dp, struct dp_netdev_port *port)
     OVS_REQUIRES(dp->port_mutex)
 {
@@ -2512,11 +2507,6 @@ dpif_netdev_flow_flush(struct dpif *dpif)
 
     return 0;
 }
-
-struct dp_netdev_port_state {
-    struct hmap_position position;
-    char *name;
-};
 
 static int
 dpif_netdev_port_dump_start(const struct dpif *dpif OVS_UNUSED, void **statep)
