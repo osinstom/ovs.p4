@@ -23,23 +23,32 @@ static struct shash dp_ubpfs OVS_GUARDED_BY(dp_ubpf_mutex)
         = SHASH_INITIALIZER(&dp_ubpfs);
 
 struct dp_ubpf {
-    const struct dpif_class *const class;
+//    const struct dpif_class *const class;
     const char *const name;
-    struct ovs_refcount ref_cnt;
-    struct dp_netdev *dp_netdev;
+//    struct ovs_refcount ref_cnt;
+//    struct dp_netdev *dp_netdev;
 };
 
 /* Interface to ubpf-based datapath. */
 struct dpif_ubpf {
-    struct dpif dpif;
+    struct dpif_netdev dpif_netdev;
     struct dp_ubpf *dp;
 };
 
 static struct dpif_ubpf *
 dpif_ubpf_cast(const struct dpif *dpif)
 {
-    return CONTAINER_OF(dpif, struct dpif_ubpf, dpif);
+    return CONTAINER_OF(dpif, struct dpif_ubpf, dpif_netdev.dpif);
 }
+
+static void
+process_ubpf(struct dp_netdev_pmd_thread *pmd,
+             struct dp_packet_batch *packets,
+             bool md_is_valid, odp_port_t port_no)
+{
+    VLOG_INFO("uBPF processing");
+}
+
 
 static int
 dpif_ubpf_init(void) {
@@ -70,15 +79,15 @@ static struct dpif *
 create_dpif_ubpf(struct dp_ubpf *dp)
 {
     struct dpif_ubpf *dpif;
-
-    ovs_refcount_ref(&dp->ref_cnt);
+    struct dp_netdev *dp_netdev;
+//    ovs_refcount_ref(&dp->ref_cnt);
 
     dpif = xmalloc(sizeof *dpif);
 
-    dpif->dpif = *create_dpif_netdev(dp->dp_netdev);
+    struct dpif *dpifp = create_dpif_netdev(dp_netdev);
     dpif->dp = dp;
 
-    return &dpif->dpif;
+    return dpifp;
 }
 
 static int
@@ -88,22 +97,25 @@ create_dp_ubpf(const char *name, const struct dpif_class *class,
 {
     VLOG_INFO("Create dp ubpf");
     struct dp_ubpf *dp;
-
+    struct dp_netdev *dp_netdev;
     dp = xzalloc(sizeof *dp);
 
-    int error = create_dp_netdev(name, class, &dp->dp_netdev);
+    int error = create_dp_netdev(name, class, &dp_netdev);
     if (error) {
         VLOG_INFO("Error creating dp netdev");
         free(dp);
         return error;
     }
 
+//    dp->dp_netdev->process_cb = process_ubpf;
+
     shash_add(&dp_ubpfs, name, dp);
 
-    *CONST_CAST(const struct dpif_class **, &dp->class) = class;
+//    *CONST_CAST(const struct dpif_class **, &dp->class) = class;
     *CONST_CAST(const char **, &dp->name) = xstrdup(name);
 
-    ovs_refcount_init(&dp->ref_cnt);
+
+//    ovs_refcount_init(&dp->ref_cnt);
 
     *dpp = dp;
     return 0;
@@ -122,9 +134,9 @@ dpif_ubpf_open(const struct dpif_class *class,
     if (!dp) {
         error = create ? create_dp_ubpf(name, class, &dp) : ENODEV;
     } else {
-        error = (dp->class != class ? EINVAL
-                                    : create ? EEXIST
-                                             : 0);
+//        error = (dp->class != class ? EINVAL
+//                                    : create ? EEXIST
+//                                             : 0);
     }
     if (!error) {
         *dpifp = create_dpif_ubpf(dp);
@@ -166,7 +178,7 @@ static int
 dpif_ubpf_port_query_by_name(const struct dpif *dpif, const char *devname,
                              struct dpif_port *dpif_port)
 {
-    struct dp_netdev *dp = dpif_ubpf_cast(dpif)->dp->dp_netdev;
+    struct dp_netdev *dp = ((struct dpif_netdev *) dpif_ubpf_cast(dpif)->dp)->dp;
     int error;
     struct dp_netdev_port *port;
 
@@ -183,6 +195,7 @@ dpif_ubpf_port_query_by_name(const struct dpif *dpif, const char *devname,
 static int
 dpif_ubpf_port_dump_start(const struct dpif *dpif, void **statep)
 {
+    VLOG_INFO("Port dump start");
     *statep = xzalloc(sizeof(struct dp_netdev_port_state));
     return 0;
 }
@@ -191,8 +204,10 @@ static int
 dpif_ubpf_port_dump_next(const struct dpif *dpif, void *state_,
                           struct dpif_port *dpif_port)
 {
+    VLOG_INFO("Port dump next");
+
     struct dp_netdev_port_state *state = state_;
-    struct dp_netdev *dp = dpif_ubpf_cast(dpif)->dp->dp_netdev;
+    struct dp_netdev *dp = ((struct dpif_netdev *) dpif_ubpf_cast(dpif)->dp)->dp;
     struct hmap_node *node;
     int retval;
 
@@ -264,7 +279,7 @@ ubpf_choose_port(struct dp_netdev *dp, const char *name)
 static int
 dpif_ubpf_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_nop)
 {
-    struct dp_netdev *dp = dpif_ubpf_cast(dpif)->dp->dp_netdev;
+    struct dp_netdev *dp = ((struct dpif_netdev *) dpif_ubpf_cast(dpif)->dp)->dp;
     const char *dpif_port;
     char namebuf[NETDEV_VPORT_NAME_BUFSIZE];
     odp_port_t port_no;
@@ -296,7 +311,7 @@ dpif_ubpf_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_no
 static int
 dpif_ubpf_port_del(struct dpif *dpif, odp_port_t port_no)
 {
-    struct dp_netdev *dp = dpif_ubpf_cast(dpif)->dp->dp_netdev;
+    struct dp_netdev *dp = ((struct dpif_netdev *) dpif_ubpf_cast(dpif)->dp)->dp;
     int error;
 
     ovs_mutex_lock(&dp->port_mutex);
@@ -341,10 +356,12 @@ const struct dpif_class dpif_ubpf_class = {
         dpif_ubpf_port_del,
         NULL,
         NULL,
-        dpif_ubpf_port_query_by_name,
+        dpif_netdev_port_query_by_name,
+//        dpif_ubpf_port_query_by_name,
         NULL,                       /* port_get_pid */
         dpif_ubpf_port_dump_start,
-        dpif_ubpf_port_dump_next,
+        dpif_netdev_port_dump_next,
+//        dpif_ubpf_port_dump_next,
         dpif_ubpf_port_dump_done,
         NULL,
         NULL,
