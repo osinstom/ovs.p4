@@ -89,9 +89,6 @@ struct dp_netdev {
     struct ovs_mutex meter_locks[N_METER_LOCKS];
     struct dp_meter *meters[MAX_METERS]; /* Meter bands. */
 
-    /* Data plane program. */
-    struct dp_prog *prog;
-
     /* Probability of EMC insertions is a factor of 'emc_insert_min'.*/
     OVS_ALIGNED_VAR(CACHE_LINE_SIZE) atomic_uint32_t emc_insert_min;
     /* Enable collection of PMD performance metrics. */
@@ -417,6 +414,7 @@ enum { DP_NETDEV_HEADROOM = 2 + VLAN_HEADER_LEN };
 bool dpif_is_netdev(const struct dpif *);
 
 
+int dpif_netdev_init(void);
 
 int dpif_netdev_enumerate(struct sset *all_dps,
                       const struct dpif_class *dpif_class);
@@ -425,6 +423,7 @@ struct dpif *create_dpif_netdev(struct dp_netdev *dp);
 int create_dp_netdev(const char *name, const struct dpif_class *class,
                  struct dp_netdev **dpp);
 
+bool dpif_netdev_run(struct dpif *dpif);
 
 int dpif_netdev_port_dump_next(const struct dpif *dpif, void *state_,
                            struct dpif_port *dpif_port);

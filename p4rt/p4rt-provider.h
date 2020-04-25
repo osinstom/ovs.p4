@@ -60,6 +60,8 @@ struct p4rt_class {
     void (*destruct)(struct p4rt *p4rt, bool del);
     void (*dealloc)(struct p4rt *p4rt);
 
+    int (*run)(struct p4rt *p4rt);
+
 /* ## ---------------- ## */
 /* ## p4port Functions ## */
 /* ## ---------------- ## */

@@ -77,9 +77,9 @@
 #include "tnl-neigh-cache.h"
 #include "tnl-ports.h"
 #include "unixctl.h"
+#include "unixctl.h"
 #include "util.h"
 #include "uuid.h"
-#include "bpf.h"
 
 VLOG_DEFINE_THIS_MODULE(dpif_netdev);
 
@@ -192,11 +192,6 @@ static bool dpcls_lookup(struct dpcls *cls,
 /* Set of supported meter band types */
 #define DP_SUPPORTED_METER_BAND_TYPES           \
     ( 1 << OFPMBT13_DROP )
-
-struct dp_prog {
-    uint16_t id;
-    struct ubpf_vm *vm;
-};
 
 struct dp_netdev_action_flow {
     struct cmap_node node;
@@ -1050,7 +1045,7 @@ pmd_perf_show_cmd(struct unixctl_conn *conn, int argc,
     dpif_netdev_pmd_info(conn, argc, argv, &par);
 }
 
-static int
+int
 dpif_netdev_init(void)
 {
     static enum pmd_info_type show_aux = PMD_INFO_SHOW_STATS,
@@ -4983,7 +4978,7 @@ pmd_rebalance_dry_run(struct dp_netdev *dp)
 
 
 /* Return true if needs to revalidate datapath flows. */
-static bool
+bool
 dpif_netdev_run(struct dpif *dpif)
 {
     struct dp_netdev_port *port;
@@ -5644,25 +5639,6 @@ dpif_netdev_meter_del(struct dpif *dpif,
     return error;
 }
 
-static int
-dpif_netdev_dp_prog_set(struct dpif *dpif, uint16_t prog_id, struct ubpf_vm *prog)
-{
-    struct dp_netdev *dp = get_dp_netdev(dpif);
-    struct dp_prog *dp_prog;
-    VLOG_INFO("dpif_netdev_dp_prog_set in dpif-netdev.c");
-    VLOG_INFO("Injecting BPF program ID=%d", prog_id);
-    dp_prog = xzalloc(sizeof *dp_prog);
-    dp_prog->id = prog_id;
-    dp_prog->vm = prog;
-    if (dp->prog) {
-        free(dp->prog);
-        dp->prog = NULL;
-    }
-    dp->prog = dp_prog;
-    VLOG_INFO("Injected");
-    return 0;
-}
-
 
 static void
 dpif_netdev_disable_upcall(struct dpif *dpif)
@@ -6166,32 +6142,6 @@ packet_batch_per_action_execute(struct packet_batch_per_action *batch,
     dp_packet_batch_init(&batch->output_batch);
 }
 
-static inline struct dp_netdev_action_flow *
-dp_netdev_action_flow_init(struct dp_netdev_pmd_thread *pmd,
-                           uint16_t action_type,
-                           void *actions_args,
-                           uint32_t hash)
-{
-    struct dp_netdev_action_flow *act_flow = xmalloc(sizeof *act_flow);  // TODO: must be freed somewhere later
-    struct nlattr *act;
-    switch (action_type) {
-        case REDIRECT: {
-            uint32_t port = *((uint32_t *)actions_args);
-            act = xzalloc(NLA_HDRLEN + sizeof(port));
-            act->nla_len = NLA_HDRLEN + sizeof(port);
-            act->nla_type = OVS_ACTION_ATTR_OUTPUT;
-            nullable_memcpy(act + 1, &port, sizeof(port));
-            break;
-        }
-    }
-    act_flow->action = act;
-    act_flow->action_batch = NULL; // force batch initialization
-    act_flow->hash = hash;
-
-    cmap_insert(&pmd->action_table, &act_flow->node, hash);
-
-    return act_flow;
-}
 
 static inline struct dp_netdev_action_flow *
 get_dp_netdev_action_flow(struct dp_netdev_pmd_thread *pmd,
@@ -6212,20 +6162,6 @@ packet_batch_per_action_update(struct packet_batch_per_action *batch,
                                struct dp_packet *pkt)
 {
     dp_packet_batch_add(&batch->output_batch, pkt);
-}
-
-static inline void
-dp_netdev_queue_action_batches(struct dp_packet *pkt,
-                               struct dp_netdev_action_flow *action)
-{
-    struct packet_batch_per_action *batch = action->action_batch;
-
-    if (OVS_UNLIKELY(!batch)) {
-        batch = xmalloc(sizeof(struct packet_batch_per_action));
-        packet_batch_per_action_init(batch, action);
-    }
-
-    packet_batch_per_action_update(batch, pkt);
 }
 
 static inline void
@@ -6653,49 +6589,6 @@ fast_path_processing(struct dp_netdev_pmd_thread *pmd,
                             upcall_ok_cnt);
     pmd_perf_update_counter(&pmd->perf_stats, PMD_STAT_LOST,
                             upcall_fail_cnt);
-}
-
-static inline void
-protocol_independent_processing(struct dp_netdev_pmd_thread *pmd,
-                                struct dp_packet_batch *packets_,
-                                odp_port_t in_port)
-{
-    struct dp_netdev *dp = pmd->dp;
-
-    if (OVS_LIKELY(dp->prog)) {
-        struct dp_packet *packet;
-        DP_PACKET_BATCH_FOR_EACH (i, packet, packets_) {
-            struct standard_metadata std_meta = {
-                    .input_port = odp_to_u32(in_port),
-            };
-
-            ubpf_handle_packet(dp->prog->vm, &std_meta, packet);
-//            VLOG_INFO("From uBPF, action = %d", std_meta.output_action);
-            switch (std_meta.output_action) {
-                case REDIRECT: {
-//                    VLOG_INFO("Action Redirect, port = %d", std_meta.output_port);
-                    uint32_t hash = hash_2words(std_meta.output_action,
-                            std_meta.output_port);
-
-                    struct dp_netdev_action_flow *act_flow;
-                    act_flow = get_dp_netdev_action_flow(pmd, hash);
-                    if (OVS_UNLIKELY(!act_flow)) {
-                        act_flow = dp_netdev_action_flow_init(pmd,
-                                REDIRECT, &std_meta.output_port, hash);
-                    }
-                    dp_netdev_queue_action_batches(packet, act_flow);
-                    break;
-                }
-            }
-        }
-
-        struct dp_netdev_action_flow *output_flow;
-        CMAP_FOR_EACH(output_flow, node, &pmd->action_table) {
-            packet_batch_per_action_execute(output_flow->action_batch, pmd);
-        }
-
-    }
-
 }
 
 /* Packets enter the datapath from a port (or from recirculation) here.
@@ -7626,7 +7519,6 @@ const struct dpif_class dpif_netdev_class = {
     dpif_netdev_meter_set,
     dpif_netdev_meter_get,
     dpif_netdev_meter_del,
-    dpif_netdev_dp_prog_set,
 };
 
 static void

@@ -78,7 +78,18 @@ p4rt_dpif_enumerate_types(struct sset *types)
 static int
 p4rt_dpif_type_run(const char *type)
 {
-//    VLOG_INFO("p4rt_dpif_type_run");
+    VLOG_INFO("p4rt_dpif_type_run");
+    struct p4rt_dpif_backer *backer;
+
+    backer = shash_find_data(&all_p4rt_dpif_backers, type);
+    if (!backer) {
+        /* This is not necessarily a problem, since backers are only
+         * created on demand. */
+        return 0;
+    }
+
+    dpif_run(backer->dpif);
+
     return 0;
 }
 
@@ -259,6 +270,12 @@ p4rt_dpif_port_dealloc(struct p4port *p4port)
 /* ## p4port Functions ## */
 /* ## ---------------- ## */
 
+static int
+p4rt_dpif_run(struct p4rt *p4rt)
+{
+    return 0;
+}
+
 static void
 p4rt_port_from_dpif_port(struct p4rt_dpif *p4rt, struct p4rt_port *port, struct dpif_port *dpif_port)
 {
@@ -316,6 +333,7 @@ const struct p4rt_class p4rt_dpif_class = {
     p4rt_dpif_construct,
     p4rt_dpif_destruct,
     p4rt_dpif_dealloc,
+    p4rt_dpif_run,
     p4rt_dpif_port_alloc,
     p4rt_dpif_port_construct,
     p4rt_dpif_port_destruct,

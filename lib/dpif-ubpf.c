@@ -11,7 +11,7 @@
 #include "openvswitch/util.h"
 #include "openvswitch/vlog.h"
 #include "ovs-atomic.h"
-
+#include "bpf.h"
 
 VLOG_DEFINE_THIS_MODULE(dpif_ubpf);
 
@@ -22,12 +22,37 @@ static struct ovs_mutex dp_ubpf_mutex = OVS_MUTEX_INITIALIZER;
 static struct shash dp_ubpfs OVS_GUARDED_BY(dp_ubpf_mutex)
         = SHASH_INITIALIZER(&dp_ubpfs);
 
-struct dp_ubpf {
-//    const struct dpif_class *const class;
-    const char *const name;
-//    struct ovs_refcount ref_cnt;
-//    struct dp_netdev *dp_netdev;
+struct dp_prog {
+    uint16_t id;
+    struct ubpf_vm *vm;
 };
+
+struct dp_netdev_action_flow {
+    struct cmap_node node;
+    uint32_t hash;
+    struct nlattr *action;
+
+    struct packet_batch_per_action *action_batch;
+};
+
+struct packet_batch_per_action {
+    struct dp_packet_batch output_batch;
+    struct dp_netdev_action_flow *action;
+};
+
+struct dp_ubpf {
+    struct dp_netdev *dp_netdev;
+    const char *const name;
+
+    /* Data plane program. */
+    struct dp_prog *prog;
+};
+
+static struct dp_ubpf *
+dp_ubpf_cast(struct dp_netdev *dp_netdev)
+{
+    return CONTAINER_OF(dp_netdev, struct dp_ubpf, dp_netdev);
+}
 
 /* Interface to ubpf-based datapath. */
 struct dpif_ubpf {
@@ -41,39 +66,134 @@ dpif_ubpf_cast(const struct dpif *dpif)
     return CONTAINER_OF(dpif, struct dpif_ubpf, dpif_netdev.dpif);
 }
 
+static inline struct dp_netdev_action_flow *
+dp_netdev_action_flow_init(struct dp_netdev_pmd_thread *pmd,
+                           uint16_t action_type,
+                           void *actions_args,
+                           uint32_t hash)
+{
+    struct dp_netdev_action_flow *act_flow = xmalloc(sizeof *act_flow);  // TODO: must be freed somewhere later
+    struct nlattr *act;
+    switch (action_type) {
+        case REDIRECT: {
+            uint32_t port = *((uint32_t *)actions_args);
+            act = xzalloc(NLA_HDRLEN + sizeof(port));
+            act->nla_len = NLA_HDRLEN + sizeof(port);
+            act->nla_type = OVS_ACTION_ATTR_OUTPUT;
+            nullable_memcpy(act + 1, &port, sizeof(port));
+            break;
+        }
+    }
+    act_flow->action = act;
+    act_flow->action_batch = NULL; // force batch initialization
+    act_flow->hash = hash;
+
+    cmap_insert(&pmd->action_table, &act_flow->node, hash);
+
+    return act_flow;
+}
+
+static inline void
+packet_batch_per_action_init(struct packet_batch_per_action *batch,
+                             struct dp_netdev_action_flow *action)
+{
+    action->action_batch = batch;
+    batch->action = action;
+
+    dp_packet_batch_init(&batch->output_batch);
+}
+
+static inline void
+packet_batch_per_action_update(struct packet_batch_per_action *batch,
+                               struct dp_packet *pkt)
+{
+    dp_packet_batch_add(&batch->output_batch, pkt);
+}
+
+static inline void
+dp_netdev_queue_action_batches(struct dp_packet *pkt,
+                               struct dp_netdev_action_flow *action)
+{
+    struct packet_batch_per_action *batch = action->action_batch;
+
+    if (OVS_UNLIKELY(!batch)) {
+        batch = xmalloc(sizeof(struct packet_batch_per_action));
+        packet_batch_per_action_init(batch, action);
+    }
+
+    packet_batch_per_action_update(batch, pkt);
+}
+
+static inline void
+packet_batch_per_action_execute(struct packet_batch_per_action *batch,
+                                struct dp_netdev_pmd_thread *pmd)
+{
+    struct nlattr *act = batch->action->action;
+    dp_netdev_execute_actions(pmd, &batch->output_batch, false, NULL,
+                              act, NLA_HDRLEN + sizeof(uint32_t)); // FIXME: this is really temporary
+    dp_packet_batch_init(&batch->output_batch);
+}
+
+static inline void
+protocol_independent_processing(struct dp_netdev_pmd_thread *pmd,
+                                struct dp_packet_batch *packets_,
+                                odp_port_t in_port)
+{
+    struct dp_ubpf *dp = dp_ubpf_cast(pmd->dp);
+
+    if (OVS_LIKELY(dp->prog)) {
+        struct dp_packet *packet;
+        DP_PACKET_BATCH_FOR_EACH (i, packet, packets_) {
+                struct standard_metadata std_meta = {
+                        .input_port = odp_to_u32(in_port),
+                };
+
+                ubpf_handle_packet(dp->prog->vm, &std_meta, packet);
+//            VLOG_INFO("From uBPF, action = %d", std_meta.output_action);
+                switch (std_meta.output_action) {
+                    case REDIRECT: {
+//                    VLOG_INFO("Action Redirect, port = %d", std_meta.output_port);
+                        uint32_t hash = hash_2words(std_meta.output_action,
+                                                    std_meta.output_port);
+
+                        struct dp_netdev_action_flow *act_flow;
+                        act_flow = get_dp_netdev_action_flow(pmd, hash);
+                        if (OVS_UNLIKELY(!act_flow)) {
+                            act_flow = dp_netdev_action_flow_init(pmd,
+                                                                  REDIRECT, &std_meta.output_port, hash);
+                        }
+                        dp_netdev_queue_action_batches(packet, act_flow);
+                        break;
+                    }
+                }
+            }
+
+        struct dp_netdev_action_flow *output_flow;
+        CMAP_FOR_EACH(output_flow, node, &pmd->action_table) {
+            packet_batch_per_action_execute(output_flow->action_batch, pmd);
+        }
+
+    }
+
+}
+
 static void
 process_ubpf(struct dp_netdev_pmd_thread *pmd,
              struct dp_packet_batch *packets,
              bool md_is_valid, odp_port_t port_no)
 {
     VLOG_INFO("uBPF processing");
+    protocol_independent_processing(pmd, packets, port_no);
 }
 
-
 static int
-dpif_ubpf_init(void) {
+dpif_ubpf_init(void)
+{
+    // initialize dpif-netdev too.
+    dpif_netdev_init();
     VLOG_INFO("uBPF datapath initialized");
     return 0;
 }
-
-static int
-dpif_ubpf_enumerate(struct sset *all_dps, const struct dpif_class *dpif_class)
-{
-    return dpif_netdev_enumerate(all_dps, dpif_class);
-}
-
-static const char *
-dpif_ubpf_port_open_type(const struct dpif_class *class, const char *type)
-{
-    VLOG_INFO("Returning port open type");
-    return dpif_netdev_port_open_type(class, type);
-}
-
-//static void
-//dpif_set_from_netdev(struct dpif *dpif, )
-//{
-//
-//}
 
 static struct dpif *
 create_dpif_ubpf(struct dp_ubpf *dp)
@@ -84,8 +204,9 @@ create_dpif_ubpf(struct dp_ubpf *dp)
 
     dpif = xmalloc(sizeof *dpif);
 
-    struct dpif *dpifp = create_dpif_netdev(dp_netdev);
+    struct dpif *dpifp = create_dpif_netdev(dp->dp_netdev);
     dpif->dp = dp;
+    dpif->dpif_netdev.dp = dp->dp_netdev;
 
     return dpifp;
 }
@@ -97,17 +218,16 @@ create_dp_ubpf(const char *name, const struct dpif_class *class,
 {
     VLOG_INFO("Create dp ubpf");
     struct dp_ubpf *dp;
-    struct dp_netdev *dp_netdev;
     dp = xzalloc(sizeof *dp);
 
-    int error = create_dp_netdev(name, class, &dp_netdev);
+    int error = create_dp_netdev(name, class, &dp->dp_netdev);
     if (error) {
         VLOG_INFO("Error creating dp netdev");
         free(dp);
         return error;
     }
 
-//    dp->dp_netdev->process_cb = process_ubpf;
+    dp->dp_netdev->process_cb = process_ubpf;
 
     shash_add(&dp_ubpfs, name, dp);
 
@@ -134,9 +254,9 @@ dpif_ubpf_open(const struct dpif_class *class,
     if (!dp) {
         error = create ? create_dp_ubpf(name, class, &dp) : ENODEV;
     } else {
-//        error = (dp->class != class ? EINVAL
-//                                    : create ? EEXIST
-//                                             : 0);
+        error = (dp->dp_netdev->class != class ? EINVAL
+                                    : create ? EEXIST
+                                             : 0);
     }
     if (!error) {
         *dpifp = create_dpif_ubpf(dp);
@@ -279,7 +399,7 @@ ubpf_choose_port(struct dp_netdev *dp, const char *name)
 static int
 dpif_ubpf_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_nop)
 {
-    struct dp_netdev *dp = ((struct dpif_netdev *) dpif_ubpf_cast(dpif)->dp)->dp;
+    struct dp_netdev *dp = (dpif_ubpf_cast(dpif)->dpif_netdev).dp;
     const char *dpif_port;
     char namebuf[NETDEV_VPORT_NAME_BUFSIZE];
     odp_port_t port_no;
@@ -337,18 +457,35 @@ dpif_ubpf_flow_dump_create(const struct dpif *dpif_, bool terse,
 
 }
 
-
+static int
+dp_prog_set(struct dpif *dpif, uint16_t prog_id, struct ubpf_vm *prog)
+{
+    struct dp_ubpf *dp = dpif_ubpf_cast(dpif)->dp;
+    struct dp_prog *dp_prog;
+    VLOG_INFO("dpif_netdev_dp_prog_set in dpif-netdev.c");
+    VLOG_INFO("Injecting BPF program ID=%d", prog_id);
+    dp_prog = xzalloc(sizeof *dp_prog);
+    dp_prog->id = prog_id;
+    dp_prog->vm = prog;
+    if (dp->prog) {
+        free(dp->prog);
+        dp->prog = NULL;
+    }
+    dp->prog = dp_prog;
+    VLOG_INFO("Injected");
+    return 0;
+}
 
 const struct dpif_class dpif_ubpf_class = {
         "ubpf",
         true,
         dpif_ubpf_init,
-        dpif_ubpf_enumerate,
-        dpif_ubpf_port_open_type,
+        dpif_netdev_enumerate,
+        dpif_netdev_port_open_type,
         dpif_ubpf_open,
         dpif_ubpf_close,
         dpif_ubpf_destroy,
-        dpif_ubpf_run,
+        dpif_netdev_run,
         dpif_ubpf_wait,
         dpif_ubpf_get_stats,
         NULL,                      /* set_features */
@@ -414,7 +551,7 @@ const struct dpif_class dpif_ubpf_class = {
         NULL,
         NULL,
         NULL,
-        NULL,
+        dp_prog_set,
 };
 
 void

@@ -116,7 +116,14 @@ p4rt_init()
 int
 p4rt_run(struct p4rt *p4rt)
 {
-    return 0;
+    int error;
+
+    error = p4rt->p4rt_class->run(p4rt);
+    if (error && error != EAGAIN) {
+        VLOG_ERR_RL(&rl, "%s: run failed (%s)", p4rt->name, ovs_strerror(error));
+    }
+
+    return error;
 }
 
 int
