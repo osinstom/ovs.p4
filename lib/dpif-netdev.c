@@ -431,12 +431,12 @@ static void dp_netdev_free(struct dp_netdev *)
     OVS_REQUIRES(dp_netdev_mutex);
 static int dpif_netdev_open(const struct dpif_class *, const char *name,
                             bool create, struct dpif **);
-static void dp_netdev_execute_actions(struct dp_netdev_pmd_thread *pmd,
-                                      struct dp_packet_batch *,
-                                      bool should_steal,
-                                      const struct flow *flow,
-                                      const struct nlattr *actions,
-                                      size_t actions_len);
+//static void dp_netdev_execute_actions(struct dp_netdev_pmd_thread *pmd,
+//                                      struct dp_packet_batch *,
+//                                      bool should_steal,
+//                                      const struct flow *flow,
+//                                      const struct nlattr *actions,
+//                                      size_t actions_len);
 static void dp_netdev_input__(struct dp_netdev_pmd_thread *pmd,
                               struct dp_packet_batch *packets,
                               bool md_is_valid, odp_port_t port_no);
@@ -6143,20 +6143,6 @@ packet_batch_per_action_execute(struct packet_batch_per_action *batch,
 }
 
 
-static inline struct dp_netdev_action_flow *
-get_dp_netdev_action_flow(struct dp_netdev_pmd_thread *pmd,
-                          uint32_t hash)
-{
-    struct cmap_node *node;
-    struct dp_netdev_action_flow *act_flow;
-
-    node = cmap_find(&pmd->action_table, hash);
-    if (OVS_LIKELY(node != NULL)) {
-        return CONTAINER_OF(node, struct dp_netdev_action_flow, node);
-    }
-    return NULL;
-}
-
 static inline void
 packet_batch_per_action_update(struct packet_batch_per_action *batch,
                                struct dp_packet *pkt)
@@ -7192,7 +7178,7 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
     dp_packet_delete_batch(packets_, should_steal);
 }
 
-static void
+void
 dp_netdev_execute_actions(struct dp_netdev_pmd_thread *pmd,
                           struct dp_packet_batch *packets,
                           bool should_steal, const struct flow *flow,

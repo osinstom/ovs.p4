@@ -2327,6 +2327,15 @@
       </group>
     </group>
 
+    <group title="P4-enabled Forwarding">
+      <column name="other_config" key="program">
+        <p>
+          Specifies a path to the target binary generated from the P4 program that
+          implements packet processing pipeline of P4 datapath.
+        </p>
+      </column>
+    </group>
+
     <group title="Multicast Snooping">
       <column name="other_config" key="mcast-snooping-flood"
               type='{"type": "boolean"}'>

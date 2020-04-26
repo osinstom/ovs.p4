@@ -443,7 +443,10 @@ int do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
 void do_del_port(struct dp_netdev *dp, struct dp_netdev_port *port)
     OVS_REQUIRES(dp->port_mutex);
 
-
+void dp_netdev_execute_actions(struct dp_netdev_pmd_thread *pmd,
+                          struct dp_packet_batch *packets,
+                          bool should_steal, const struct flow *flow,
+                          const struct nlattr *actions, size_t actions_len);
 
 #define NR_QUEUE   1
 #define NR_PMD_THREADS 1

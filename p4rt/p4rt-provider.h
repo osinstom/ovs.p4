@@ -22,6 +22,13 @@ struct p4port {
     long long int created;      /* Time created, in msec. */
 };
 
+struct program {
+    struct p4rt *const p4rt;
+
+    void *data;               /* Target-specific representation of P4 program */
+    size_t data_len;
+};
+
 struct p4rt_class {
 
     void (*init)();
@@ -90,7 +97,16 @@ struct p4rt_class {
      * convenient. */
     int (*port_add)(struct p4rt *p, struct netdev *netdev);
 
+/* ## --------------------- ## */
+/* ## P4-specific Functions ## */
+/* ## --------------------- ## */
 
+    /* Life-cycle functions for a "struct program".
+     *
+     *
+     */
+    struct program *(*program_alloc)(void);
+    int (*program_insert)(struct program *prog);
 
 
 };

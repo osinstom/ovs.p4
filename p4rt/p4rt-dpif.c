@@ -23,6 +23,12 @@ struct p4port_dpif {
     odp_port_t odp_port;
 };
 
+struct program_dpif {
+    struct program up;
+
+    // TODO: other datapath-specific fields
+};
+
 static struct shash p4rt_dpif_classes = SHASH_INITIALIZER(&p4rt_dpif_classes);
 
 /* All existing p4rt instances, indexed by p4rt->up.type. */
@@ -324,6 +330,35 @@ p4rt_dpif_port_add(struct p4rt *p, struct netdev *netdev)
     return 0;
 }
 
+static struct program *
+p4rt_dpif_prog_alloc()
+{
+    struct program_dpif *program = xzalloc(sizeof *program);
+    return &program->up;
+}
+
+static int
+p4rt_dpif_prog_insert(struct program *prog)
+{
+    int error;
+    VLOG_INFO("Inserting program");
+    struct p4rt_dpif *p4rt = p4rt_dpif_cast(prog->p4rt);
+    struct dpif *dpif = p4rt->backer->dpif;
+
+    struct dpif_prog dpif_prog = {
+            .id = 0,
+            .data = prog->data,
+            .data_len = prog->data_len,
+    };
+//    dpif_prog->id = 0;
+//    dpif_prog->data = prog->data;
+//    dpif_prog->data_len = prog->data_len;
+
+    error = dpif->dpif_class->dp_prog_set(dpif, dpif_prog);
+
+    return error;
+}
+
 const struct p4rt_class p4rt_dpif_class = {
     p4rt_dpif_init, /* init */
     NULL,           /* port_open_type */
@@ -340,5 +375,7 @@ const struct p4rt_class p4rt_dpif_class = {
     p4rt_dpif_port_dealloc,
     p4rt_dpif_port_query_by_name,
     p4rt_dpif_port_add,
+    p4rt_dpif_prog_alloc,
+    p4rt_dpif_prog_insert,
 };
 

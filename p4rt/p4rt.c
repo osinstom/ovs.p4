@@ -169,6 +169,84 @@ p4rt_create(const char *datapath_name, const char *datapath_type,
     return error;
 }
 
+static int
+read_program_from_file(FILE *file, char **programp)
+{
+    if (file == NULL) {
+        return ENOENT;
+    }
+
+    fseek(file, 0L, SEEK_END);
+    size_t length = ftell(file);
+    fseek(file, 0L, SEEK_SET);
+
+    char program[length];
+    if (fread(program, sizeof(char), length, file) != length) {
+        return ferror(file) ? errno : EOF;
+    }
+
+    fclose(file);
+
+    *programp = program;
+    return 0;
+}
+
+int
+p4rt_initialize_datapath(struct p4rt *p, char *filename)
+{
+    int error = 0;
+
+    FILE *stream = !strcmp(filename, "-") ? stdin : fopen(filename, "r");
+    if (stream == NULL) {
+        error = ENOENT;
+        VLOG_WARN_RL(&rl, "failed to initialize P4 datapath of %s "
+                          "with binary from file '%s' (%s)",
+                     p->name, filename, ovs_strerror(error));
+        return error;
+    }
+
+    fseek(stream, 0L, SEEK_END);
+    size_t length = ftell(stream);
+    fseek(stream, 0L, SEEK_SET);
+
+    char program[length];
+    if (fread(program, sizeof(char), length, stream) != length) {
+        error = ferror(stream) ? errno : EOF;
+        goto error;
+    }
+    fclose(stream);
+
+    VLOG_INFO("Program read: %s", program);
+
+    struct program *prog = p->p4rt_class->program_alloc();
+    if (!prog) {
+        error = ENOMEM;
+        goto error;
+    }
+
+    *CONST_CAST(struct p4rt **, &prog->p4rt) = p;
+    prog->data = program;
+    prog->data_len = length;
+
+    error = p->p4rt_class->program_insert(prog);
+    if (error) {
+        goto error;
+    }
+
+    return 0;
+
+error:
+    VLOG_WARN_RL(&rl, "failed to initialize P4 datapath of %s "
+                      "with binary from file '%s' (%s)",
+                 p->name, filename, ovs_strerror(error));
+    if (prog) {
+        // TODO: dealloc program here.
+    } else {
+        fclose(stream);
+    }
+    return error;
+}
+
 static void
 p4rt_destroy__(struct p4rt *p)
     OVS_EXCLUDED(p4rt_mutex)

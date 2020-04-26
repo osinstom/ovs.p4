@@ -93,6 +93,20 @@ dp_netdev_action_flow_init(struct dp_netdev_pmd_thread *pmd,
     return act_flow;
 }
 
+static inline struct dp_netdev_action_flow *
+get_dp_netdev_action_flow(struct dp_netdev_pmd_thread *pmd,
+                          uint32_t hash)
+{
+    struct cmap_node *node;
+    struct dp_netdev_action_flow *act_flow;
+
+    node = cmap_find(&pmd->action_table, hash);
+    if (OVS_LIKELY(node != NULL)) {
+        return CONTAINER_OF(node, struct dp_netdev_action_flow, node);
+    }
+    return NULL;
+}
+
 static inline void
 packet_batch_per_action_init(struct packet_batch_per_action *batch,
                              struct dp_netdev_action_flow *action)
@@ -207,8 +221,9 @@ create_dpif_ubpf(struct dp_ubpf *dp)
     struct dpif *dpifp = create_dpif_netdev(dp->dp_netdev);
     dpif->dp = dp;
     dpif->dpif_netdev.dp = dp->dp_netdev;
+    dpif->dpif_netdev.dpif = *dpifp;
 
-    return dpifp;
+    return &dpif->dpif_netdev.dpif;
 }
 
 static int
@@ -233,7 +248,7 @@ create_dp_ubpf(const char *name, const struct dpif_class *class,
 
 //    *CONST_CAST(const struct dpif_class **, &dp->class) = class;
     *CONST_CAST(const char **, &dp->name) = xstrdup(name);
-
+    dp->prog = NULL;
 
 //    ovs_refcount_init(&dp->ref_cnt);
 
@@ -431,7 +446,7 @@ dpif_ubpf_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_no
 static int
 dpif_ubpf_port_del(struct dpif *dpif, odp_port_t port_no)
 {
-    struct dp_netdev *dp = ((struct dpif_netdev *) dpif_ubpf_cast(dpif)->dp)->dp;
+    struct dp_netdev *dp = (dpif_ubpf_cast(dpif)->dpif_netdev).dp;
     int error;
 
     ovs_mutex_lock(&dp->port_mutex);
@@ -458,15 +473,23 @@ dpif_ubpf_flow_dump_create(const struct dpif *dpif_, bool terse,
 }
 
 static int
-dp_prog_set(struct dpif *dpif, uint16_t prog_id, struct ubpf_vm *prog)
+dp_prog_set(struct dpif *dpif, struct dpif_prog *prog)
 {
     struct dp_ubpf *dp = dpif_ubpf_cast(dpif)->dp;
     struct dp_prog *dp_prog;
     VLOG_INFO("dpif_netdev_dp_prog_set in dpif-netdev.c");
-    VLOG_INFO("Injecting BPF program ID=%d", prog_id);
+    VLOG_INFO("Injecting BPF program ID=%d", prog->id);
+
+    struct ubpf_vm *vm = create_ubpf_vm(prog->id);
+    if (!load_bpf_prog(vm, prog->data_len, prog->data)) {
+        ubpf_destroy(vm);
+        return -1; // FIXME: not sure what to return
+    }
+
     dp_prog = xzalloc(sizeof *dp_prog);
-    dp_prog->id = prog_id;
-    dp_prog->vm = prog;
+    dp_prog->id = prog->id;
+    dp_prog->vm = vm;
+
     if (dp->prog) {
         free(dp->prog);
         dp->prog = NULL;

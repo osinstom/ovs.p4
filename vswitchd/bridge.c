@@ -829,6 +829,15 @@ bridge_configure_p4rt_datapath_id(struct bridge *br)
 }
 
 static void
+bridge_configure_p4_datapath(struct bridge *br)
+{
+    const char *program_path = smap_get(&br->cfg->other_config, "program");
+    if (program_path != NULL) {
+        p4rt_initialize_datapath(br->p4rt, program_path);
+    }
+}
+
+static void
 bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
 {
     struct sockaddr_in *managers;
@@ -979,6 +988,8 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
             bridge_configure_tables(br);
             bridge_configure_dp_desc(br);
             bridge_configure_aa(br);
+        } else {
+            bridge_configure_p4_datapath(br);
         }
     }
     free(managers);

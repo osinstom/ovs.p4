@@ -618,7 +618,7 @@ struct dpif_class {
                      struct ofputil_meter_stats *, uint16_t n_bands);
 
     /* Adds or modifies the data plane program in `dpif` */
-    int (*dp_prog_set)(struct dpif *, uint16_t prog_id, struct ubpf_vm *prog);
+    int (*dp_prog_set)(struct dpif *, struct dpif_prog prog);
 };
 
 extern const struct dpif_class dpif_netlink_class;
