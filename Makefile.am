@@ -76,6 +76,9 @@ EXTRA_DIST = \
 	MAINTAINERS.rst \
 	README-original.rst \
 	README.md \
+	demo/demo.p4 \
+	demo/run-demo.sh \
+	demo/test.sh \
 	utilities/mininet/p4rtovs_mininet.py \
     utilities/mininet/test_topo.py \
 	NOTICE \

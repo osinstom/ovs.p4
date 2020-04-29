@@ -19,10 +19,12 @@ DOC_SOURCE = \
 	Documentation/intro/install/general.rst \
 	Documentation/intro/install/netbsd.rst \
 	Documentation/intro/install/p4.rst \
+	Documentation/topics/p4/ovsp4-architecture.png \
 	Documentation/topics/p4/index.rst \
 	Documentation/topics/p4/design.rst \
 	Documentation/topics/p4/install.rst \
 	Documentation/topics/p4/usage.rst \
+	Documentation/topics/p4/poc.rst \
 	Documentation/topics/p4/roadmap.rst \
 	Documentation/intro/install/rhel.rst \
 	Documentation/intro/install/userspace.rst \
