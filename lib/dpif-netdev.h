@@ -418,28 +418,45 @@ int dpif_netdev_init(void);
 
 int dpif_netdev_enumerate(struct sset *all_dps,
                       const struct dpif_class *dpif_class);
+int dpif_netdev_get_stats(const struct dpif *dpif, struct dpif_dp_stats *stats);
+void dpif_netdev_wait(struct dpif *dpif);
+
 const char  *dpif_netdev_port_open_type(const struct dpif_class *class, const char *type);
 struct dpif *create_dpif_netdev(struct dp_netdev *dp);
 int create_dp_netdev(const char *name, const struct dpif_class *class,
                  struct dp_netdev **dpp);
+void dp_netdev_free(struct dp_netdev *)
+        OVS_REQUIRES(dp_netdev_mutex);
 
 bool dpif_netdev_run(struct dpif *dpif);
+void dpif_netdev_close(struct dpif *dpif);
 
+int dpif_netdev_port_dump_start(const struct dpif *dpif OVS_UNUSED, void **statep);
 int dpif_netdev_port_dump_next(const struct dpif *dpif, void *state_,
                            struct dpif_port *dpif_port);
+int dpif_netdev_port_dump_done(const struct dpif *dpif OVS_UNUSED, void *state_);
+
+int dpif_netdev_port_poll(const struct dpif *dpif_, char **devnamep OVS_UNUSED);
+void dpif_netdev_port_poll_wait(const struct dpif *dpif_);
+
 int get_port_by_number(struct dp_netdev *dp, odp_port_t port_no,
                        struct dp_netdev_port **portp)
         OVS_REQUIRES(dp->port_mutex);
 int get_port_by_name(struct dp_netdev *dp, const char *devname, struct dp_netdev_port **portp)
         OVS_REQUIRES(dp->port_mutex);
 void answer_port_query(const struct dp_netdev_port *port, struct dpif_port *dpif_port);
+int dpif_netdev_port_query_by_number(const struct dpif *dpif, odp_port_t port_no,
+                                 struct dpif_port *dpif_port);
 int dpif_netdev_port_query_by_name(const struct dpif *dpif, const char *devname,
                                    struct dpif_port *dpif_port);
 struct dp_netdev_port *dp_netdev_lookup_port(const struct dp_netdev *dp, odp_port_t)
         OVS_REQUIRES(dp->port_mutex);
+int dpif_netdev_port_add(struct dpif *dpif, struct netdev *netdev,
+                     odp_port_t *port_nop);
 int do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
             odp_port_t port_no)
     OVS_REQUIRES(dp->port_mutex);
+int dpif_netdev_port_del(struct dpif *dpif, odp_port_t port_no);
 void do_del_port(struct dp_netdev *dp, struct dp_netdev_port *port)
     OVS_REQUIRES(dp->port_mutex);
 

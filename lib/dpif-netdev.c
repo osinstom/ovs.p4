@@ -427,8 +427,6 @@ struct tx_port {
     struct dp_netdev_rxq *output_pkts_rxqs[NETDEV_MAX_BURST];
 };
 
-static void dp_netdev_free(struct dp_netdev *)
-    OVS_REQUIRES(dp_netdev_mutex);
 static int dpif_netdev_open(const struct dpif_class *, const char *name,
                             bool create, struct dpif **);
 //static void dp_netdev_execute_actions(struct dp_netdev_pmd_thread *pmd,
@@ -1309,7 +1307,7 @@ dp_delete_meter(struct dp_netdev *dp, uint32_t meter_id)
 
 /* Requires dp_netdev_mutex so that we can't get a new reference to 'dp'
  * through the 'dp_netdevs' shash while freeing 'dp'. */
-static void
+void
 dp_netdev_free(struct dp_netdev *dp)
     OVS_REQUIRES(dp_netdev_mutex)
 {
@@ -1374,7 +1372,7 @@ dp_netdev_unref(struct dp_netdev *dp)
     }
 }
 
-static void
+void
 dpif_netdev_close(struct dpif *dpif)
 {
     struct dp_netdev *dp = get_dp_netdev(dpif);
@@ -1413,7 +1411,7 @@ non_atomic_ullong_add(atomic_ullong *var, unsigned long long n)
     atomic_store_relaxed(var, tmp);
 }
 
-static int
+int
 dpif_netdev_get_stats(const struct dpif *dpif, struct dpif_dp_stats *stats)
 {
     struct dp_netdev *dp = get_dp_netdev(dpif);
@@ -1546,7 +1544,7 @@ do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
     return 0;
 }
 
-static int
+int
 dpif_netdev_port_add(struct dpif *dpif, struct netdev *netdev,
                      odp_port_t *port_nop)
 {
@@ -1574,7 +1572,7 @@ dpif_netdev_port_add(struct dpif *dpif, struct netdev *netdev,
     return error;
 }
 
-static int
+int
 dpif_netdev_port_del(struct dpif *dpif, odp_port_t port_no)
 {
     struct dp_netdev *dp = get_dp_netdev(dpif);
@@ -1658,7 +1656,6 @@ get_port_by_name(struct dp_netdev *dp,
     struct dp_netdev_port *port;
 
     HMAP_FOR_EACH (port, node, &dp->ports) {
-        VLOG_INFO("Getting port: %s %s", port->type, netdev_get_name(port->netdev));
         if (!strcmp(netdev_get_name(port->netdev), devname)) {
             *portp = port;
             return 0;
@@ -1707,7 +1704,7 @@ answer_port_query(const struct dp_netdev_port *port,
     dpif_port->port_no = port->port_no;
 }
 
-static int
+int
 dpif_netdev_port_query_by_number(const struct dpif *dpif, odp_port_t port_no,
                                  struct dpif_port *dpif_port)
 {
@@ -2264,7 +2261,7 @@ dpif_netdev_flow_flush(struct dpif *dpif)
     return 0;
 }
 
-static int
+int
 dpif_netdev_port_dump_start(const struct dpif *dpif OVS_UNUSED, void **statep)
 {
     *statep = xzalloc(sizeof(struct dp_netdev_port_state));
@@ -2302,7 +2299,7 @@ dpif_netdev_port_dump_next(const struct dpif *dpif, void *state_,
     return retval;
 }
 
-static int
+int
 dpif_netdev_port_dump_done(const struct dpif *dpif OVS_UNUSED, void *state_)
 {
     struct dp_netdev_port_state *state = state_;
@@ -2311,7 +2308,7 @@ dpif_netdev_port_dump_done(const struct dpif *dpif OVS_UNUSED, void *state_)
     return 0;
 }
 
-static int
+int
 dpif_netdev_port_poll(const struct dpif *dpif_, char **devnamep OVS_UNUSED)
 {
     struct dpif_netdev *dpif = dpif_netdev_cast(dpif_);
@@ -2329,7 +2326,7 @@ dpif_netdev_port_poll(const struct dpif *dpif_, char **devnamep OVS_UNUSED)
     return error;
 }
 
-static void
+void
 dpif_netdev_port_poll_wait(const struct dpif *dpif_)
 {
     struct dpif_netdev *dpif = dpif_netdev_cast(dpif_);
@@ -5075,7 +5072,7 @@ dpif_netdev_run(struct dpif *dpif)
     return false;
 }
 
-static void
+void
 dpif_netdev_wait(struct dpif *dpif)
 {
     struct dp_netdev_port *port;
@@ -6834,10 +6831,10 @@ dp_execute_cb(void *aux_, struct dp_packet_batch *packets_,
 
     switch ((enum ovs_action_attr)type) {
     case OVS_ACTION_ATTR_OUTPUT:
-//        VLOG_INFO("Executing OUTPUT action");
+        VLOG_INFO("Executing OUTPUT action");
         p = pmd_send_port_cache_lookup(pmd, nl_attr_get_odp_port(a));
         if (OVS_LIKELY(p)) {
-
+            VLOG_INFO("Output port: %d", p->port->port_no);
             struct dp_packet *packet;
             struct dp_packet_batch out;
 

@@ -41,7 +41,7 @@ struct packet_batch_per_action {
 };
 
 struct dp_ubpf {
-    struct dp_netdev *dp_netdev;
+    struct dp_netdev dp_netdev;
     const char *const name;
 
     /* Data plane program. */
@@ -203,6 +203,8 @@ process_ubpf(struct dp_netdev_pmd_thread *pmd,
 static int
 dpif_ubpf_init(void)
 {
+    // Some uBPF specific objects may be initialized here.
+
     // initialize dpif-netdev too.
     dpif_netdev_init();
     VLOG_INFO("uBPF datapath initialized");
@@ -213,15 +215,11 @@ static struct dpif *
 create_dpif_ubpf(struct dp_ubpf *dp)
 {
     struct dpif_ubpf *dpif;
-    struct dp_netdev *dp_netdev;
 //    ovs_refcount_ref(&dp->ref_cnt);
 
-    dpif = xmalloc(sizeof *dpif);
-
-    struct dpif *dpifp = create_dpif_netdev(dp->dp_netdev);
+    struct dpif *dpifp = create_dpif_netdev(&dp->dp_netdev);
+    dpif = xrealloc(dpifp, sizeof(struct dpif_ubpf));
     dpif->dp = dp;
-    dpif->dpif_netdev.dp = dp->dp_netdev;
-    dpif->dpif_netdev.dpif = *dpifp;
 
     return &dpif->dpif_netdev.dpif;
 }
@@ -233,20 +231,24 @@ create_dp_ubpf(const char *name, const struct dpif_class *class,
 {
     VLOG_INFO("Create dp ubpf");
     struct dp_ubpf *dp;
-    dp = xzalloc(sizeof *dp);
 
-    int error = create_dp_netdev(name, class, &dp->dp_netdev);
+    struct dp_netdev *dp_netdev;
+    int error = create_dp_netdev(name, class, &dp_netdev);
     if (error) {
         VLOG_INFO("Error creating dp netdev");
-        free(dp);
         return error;
     }
 
-    dp->dp_netdev->process_cb = process_ubpf;
+    dp = xrealloc(dp_netdev, sizeof(struct dp_ubpf));
+    if (dp == NULL) {
+        dp_netdev_free(dp_netdev);
+        return ENOMEM;
+    }
+
+    dp->dp_netdev.process_cb = process_ubpf;
 
     shash_add(&dp_ubpfs, name, dp);
 
-//    *CONST_CAST(const struct dpif_class **, &dp->class) = class;
     *CONST_CAST(const char **, &dp->name) = xstrdup(name);
     dp->prog = NULL;
 
@@ -269,7 +271,7 @@ dpif_ubpf_open(const struct dpif_class *class,
     if (!dp) {
         error = create ? create_dp_ubpf(name, class, &dp) : ENODEV;
     } else {
-        error = (dp->dp_netdev->class != class ? EINVAL
+        error = (dp->dp_netdev.class != class ? EINVAL
                                     : create ? EEXIST
                                              : 0);
     }
@@ -284,7 +286,10 @@ dpif_ubpf_open(const struct dpif_class *class,
 static void
 dpif_ubpf_close(struct dpif *dpif)
 {
-    VLOG_INFO("Closing uBPF");
+    struct dpif_ubpf *dpif_ubpf = dpif_ubpf_cast(dpif);
+    VLOG_INFO("Closing uBPF datapath %s", dpif_ubpf->dp->name);
+    free(CONST_CAST(char *, dpif_ubpf->dp->name));
+    free(dpif_ubpf->dp->prog);
 }
 
 static int
@@ -301,200 +306,44 @@ dpif_ubpf_run(struct dpif *dpif)
     return true;
 }
 
-static void
-dpif_ubpf_wait(struct dpif *dpif)
-{
-    VLOG_INFO("Waiting uBPF");
-}
-
-
-
 static int
-dpif_ubpf_port_query_by_name(const struct dpif *dpif, const char *devname,
-                             struct dpif_port *dpif_port)
+dpif_ubpf_set_config(struct dpif *dpif, const struct smap *other_config)
 {
-    struct dp_netdev *dp = ((struct dpif_netdev *) dpif_ubpf_cast(dpif)->dp)->dp;
-    int error;
-    struct dp_netdev_port *port;
-
-    ovs_mutex_lock(&dp->port_mutex);
-    error = get_port_by_name(dp, devname, &port);
-    if (!error && dpif_port) {
-        answer_port_query(port, dpif_port);
-    }
-    ovs_mutex_unlock(&dp->port_mutex);
-
-    return error;
-}
-
-static int
-dpif_ubpf_port_dump_start(const struct dpif *dpif, void **statep)
-{
-    VLOG_INFO("Port dump start");
-    *statep = xzalloc(sizeof(struct dp_netdev_port_state));
+    // TODO: Set uBPF-specific and netdev configuration.
     return 0;
 }
 
 static int
-dpif_ubpf_port_dump_next(const struct dpif *dpif, void *state_,
-                          struct dpif_port *dpif_port)
+dpif_ubpf_port_set_config(struct dpif *dpif, odp_port_t port_no,
+                          const struct smap *cfg)
 {
-    VLOG_INFO("Port dump next");
-
-    struct dp_netdev_port_state *state = state_;
-    struct dp_netdev *dp = ((struct dpif_netdev *) dpif_ubpf_cast(dpif)->dp)->dp;
-    struct hmap_node *node;
-    int retval;
-
-    ovs_mutex_lock(&dp->port_mutex);
-    node = hmap_at_position(&dp->ports, &state->position);
-    if (node) {
-        struct dp_netdev_port *port;
-
-        port = CONTAINER_OF(node, struct dp_netdev_port, node);
-
-        free(state->name);
-        state->name = xstrdup(netdev_get_name(port->netdev));
-        dpif_port->name = state->name;
-        dpif_port->type = port->type;
-        dpif_port->port_no = port->port_no;
-
-        retval = 0;
-    } else {
-        retval = EOF;
-    }
-    ovs_mutex_unlock(&dp->port_mutex);
-
-    return retval;
-}
-
-static int
-dpif_ubpf_port_dump_done(const struct dpif *dpif, void *state_)
-{
-    struct dp_netdev_port_state *state = state_;
-    free(state->name);
-    free(state);
+    // TODO: Set uBPF-specific and netdev configuration for ports.
     return 0;
 }
 
 static int
-dpif_ubpf_flow_flush(struct dpif *dpif)
+dp_prog_set(struct dpif *dpif, struct dpif_prog prog)
 {
-    return 0;
-}
-
-static void
-dpif_ubpf_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops,
-                  enum dpif_offload_type offload_type OVS_UNUSED)
-{
-
-}
-
-static int
-dpif_ubpf_get_stats(const struct dpif *dpif, struct dpif_dp_stats *stats)
-{
-    return 0;
-}
-
-static odp_port_t
-ubpf_choose_port(struct dp_netdev *dp, const char *name)
-    OVS_REQUIRES(dp->port_mutex)
-{
-    uint32_t port_no;
-
-    for (port_no = 1; port_no <= UINT16_MAX; port_no++) {
-        if (!dp_netdev_lookup_port(dp, u32_to_odp(port_no))) {
-            return u32_to_odp(port_no);
-        }
-    }
-
-    return ODPP_NONE;
-}
-
-static int
-dpif_ubpf_port_add(struct dpif *dpif, struct netdev *netdev, odp_port_t *port_nop)
-{
-    struct dp_netdev *dp = (dpif_ubpf_cast(dpif)->dpif_netdev).dp;
-    const char *dpif_port;
-    char namebuf[NETDEV_VPORT_NAME_BUFSIZE];
-    odp_port_t port_no;
-    int error;
-
-    dpif_port = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
-    const char *type = netdev_get_type(netdev);
-
-
-    ovs_mutex_lock(&dp->port_mutex);
-    dpif_port = netdev_vport_get_dpif_port(netdev, namebuf, sizeof namebuf);
-    if (*port_nop != ODPP_NONE) {
-        port_no = *port_nop;
-        error = dp_netdev_lookup_port(dp, *port_nop) ? EBUSY : 0;
-    } else {
-        port_no = ubpf_choose_port(dp, dpif_port);
-        error = port_no == ODPP_NONE ? EFBIG : 0;
-    }
-    VLOG_INFO("Adding port %s %s, port_no=%d", dpif_port, type, port_no);
-    if (!error) {
-        *port_nop = port_no;
-        error = do_add_port(dp, dpif_port, netdev_get_type(netdev), port_no);
-    }
-    ovs_mutex_unlock(&dp->port_mutex);
-
-    return error;
-}
-
-static int
-dpif_ubpf_port_del(struct dpif *dpif, odp_port_t port_no)
-{
-    struct dp_netdev *dp = (dpif_ubpf_cast(dpif)->dpif_netdev).dp;
-    int error;
-
-    ovs_mutex_lock(&dp->port_mutex);
-    if (port_no == ODPP_LOCAL) {
-        error = EINVAL;
-    } else {
-        struct dp_netdev_port *port;
-
-        error = get_port_by_number(dp, port_no, &port);
-        if (!error) {
-            do_del_port(dp, port);
-        }
-    }
-    ovs_mutex_unlock(&dp->port_mutex);
-
-    return error;
-}
-
-static struct dpif_flow_dump *
-dpif_ubpf_flow_dump_create(const struct dpif *dpif_, bool terse,
-                           struct dpif_flow_dump_types *types OVS_UNUSED)
-{
-
-}
-
-static int
-dp_prog_set(struct dpif *dpif, struct dpif_prog *prog)
-{
-    struct dp_ubpf *dp = dpif_ubpf_cast(dpif)->dp;
+    struct dp_ubpf *dp_ubpf = dpif_ubpf_cast(dpif)->dp;
     struct dp_prog *dp_prog;
     VLOG_INFO("dpif_netdev_dp_prog_set in dpif-netdev.c");
-    VLOG_INFO("Injecting BPF program ID=%d", prog->id);
+    VLOG_INFO("Injecting BPF program ID=%d", prog.id);
 
-    struct ubpf_vm *vm = create_ubpf_vm(prog->id);
-    if (!load_bpf_prog(vm, prog->data_len, prog->data)) {
+    struct ubpf_vm *vm = create_ubpf_vm(prog.id);
+    if (!load_bpf_prog(vm, prog.data_len, prog.data)) {
         ubpf_destroy(vm);
         return -1; // FIXME: not sure what to return
     }
 
     dp_prog = xzalloc(sizeof *dp_prog);
-    dp_prog->id = prog->id;
+    dp_prog->id = prog.id;
     dp_prog->vm = vm;
 
-    if (dp->prog) {
-        free(dp->prog);
-        dp->prog = NULL;
+    if (dp_ubpf->prog) {
+        free(dp_ubpf->prog);
+        dp_ubpf->prog = NULL;
     }
-    dp->prog = dp_prog;
+    dp_ubpf->prog = dp_prog;
     VLOG_INFO("Injected");
     return 0;
 }
@@ -506,35 +355,33 @@ const struct dpif_class dpif_ubpf_class = {
         dpif_netdev_enumerate,
         dpif_netdev_port_open_type,
         dpif_ubpf_open,
-        dpif_ubpf_close,
+        dpif_netdev_close,
         dpif_ubpf_destroy,
         dpif_netdev_run,
-        dpif_ubpf_wait,
-        dpif_ubpf_get_stats,
+        dpif_netdev_wait,
+        dpif_netdev_get_stats,
         NULL,                      /* set_features */
-        dpif_ubpf_port_add,
-        dpif_ubpf_port_del,
-        NULL,
-        NULL,
+        dpif_netdev_port_add,
+        dpif_netdev_port_del,
+        dpif_ubpf_port_set_config,
+        dpif_netdev_port_query_by_number,
         dpif_netdev_port_query_by_name,
-//        dpif_ubpf_port_query_by_name,
         NULL,                       /* port_get_pid */
-        dpif_ubpf_port_dump_start,
+        dpif_netdev_port_dump_start,
         dpif_netdev_port_dump_next,
-//        dpif_ubpf_port_dump_next,
-        dpif_ubpf_port_dump_done,
+        dpif_netdev_port_dump_done,
+        dpif_netdev_port_poll,
+        dpif_netdev_port_poll_wait,
+        NULL,                       /* flow_flush */
+        NULL,                       /* flow_dump_create */
         NULL,
         NULL,
-        dpif_ubpf_flow_flush,
-        dpif_ubpf_flow_dump_create,
         NULL,
         NULL,
-        NULL,
-        NULL,
-        dpif_ubpf_operate,
+        NULL,                       /* operate */
         NULL,                       /* recv_set */
         NULL,                       /* handlers_set */
-        NULL,
+        dpif_ubpf_set_config,
         NULL,
         NULL,                       /* recv */
         NULL,                       /* recv_wait */
