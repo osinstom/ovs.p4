@@ -586,6 +586,8 @@ ubpf_compile(struct ubpf_vm *vm, char **errmsg)
     }
 
     free(state.buf);
+    free(state.pc_locs);
+    free(state.jumps);
     vm->jitted = jitted;
     vm->jitted_size = jitted_size;
     return vm->jitted;
