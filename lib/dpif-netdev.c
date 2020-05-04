@@ -1381,7 +1381,7 @@ dpif_netdev_close(struct dpif *dpif)
     free(dpif);
 }
 
-static int
+int
 dpif_netdev_destroy(struct dpif *dpif)
 {
     struct dp_netdev *dp = get_dp_netdev(dpif);
@@ -1507,7 +1507,7 @@ do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
     struct netdev_saved_flags *sf;
     struct dp_netdev_port *port;
     int error;
-    VLOG_INFO("Adding port %s %s", devname, type);
+    VLOG_INFO("Adding port %s %s (no=%d)", devname, type, port_no);
     /* Reject devices already in 'dp'. */
     if (!get_port_by_name(dp, devname, &port)) {
         return EEXIST;

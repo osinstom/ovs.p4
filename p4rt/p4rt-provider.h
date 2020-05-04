@@ -11,6 +11,8 @@ struct p4rt {
     char *name;                 /* Datapath name. */
 
     /* Datapath. */
+    struct program *prog;
+
     struct hmap ports;          /* Contains "struct p4port"s. */
 };
 
@@ -49,6 +51,27 @@ struct p4rt_class {
      * its own types to 'types' but not remove any existing ones, because other
      * p4rt classes might already have added names to it. */
     void (*enumerate_types)(struct sset *types);
+
+    /* Enumerates the names of all existing datapath of the specified 'type'
+     * into 'names' 'all_dps'.  The caller has already initialized 'names' as
+     * an empty sset.
+     *
+     * 'type' is one of the types enumerated by ->enumerate_types().
+     *
+     * Returns 0 if successful, otherwise a positive errno value.
+     */
+    int (*enumerate_names)(const char *type, struct sset *names);
+
+    /* Deletes the datapath with the specified 'type' and 'name'.  The caller
+     * should have closed any open p4rt with this 'type' and 'name'; this
+     * function is allowed to fail if that is not the case.
+     *
+     * 'type' is one of the types enumerated by ->enumerate_types().
+     * 'name' is one of the names enumerated by ->enumerate_names() for 'type'.
+     *
+     * Returns 0 if successful, otherwise a positive errno value.
+     */
+    int (*del)(const char *type, const char *name);
 
     /* Performs any periodic activity required on p4rts of type
      * 'type'.
@@ -97,6 +120,8 @@ struct p4rt_class {
      * convenient. */
     int (*port_add)(struct p4rt *p, struct netdev *netdev);
 
+    int (*port_del)(struct p4rt *p, ofp_port_t ofp_port);
+
 /* ## --------------------- ## */
 /* ## P4-specific Functions ## */
 /* ## --------------------- ## */
@@ -107,7 +132,8 @@ struct p4rt_class {
      */
     struct program *(*program_alloc)(void);
     int (*program_insert)(struct program *prog);
-
+    void (*prog_del)(struct program *prog);
+    void (*prog_dealloc)(struct program *prog);
 
 };
 

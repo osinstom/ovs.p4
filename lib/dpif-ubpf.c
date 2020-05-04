@@ -48,6 +48,8 @@ struct dp_ubpf {
     struct dp_prog *prog;
 };
 
+static void dp_prog_destroy_(struct dp_prog *prog);
+
 static struct dp_ubpf *
 dp_ubpf_cast(struct dp_netdev *dp_netdev)
 {
@@ -287,15 +289,19 @@ static void
 dpif_ubpf_close(struct dpif *dpif)
 {
     struct dpif_ubpf *dpif_ubpf = dpif_ubpf_cast(dpif);
-    VLOG_INFO("Closing uBPF datapath %s", dpif_ubpf->dp->name);
-    free(CONST_CAST(char *, dpif_ubpf->dp->name));
-    free(dpif_ubpf->dp->prog);
+    struct dp_ubpf *dp = dpif_ubpf->dp;
+    VLOG_INFO("Closing uBPF datapath %s", dp->name);
+    shash_find_and_delete(&dp_ubpfs, dp->name);
+    free(CONST_CAST(char *, dp->name));
+
+    dpif_netdev_close(&dpif_ubpf->dpif_netdev.dpif);
 }
 
 static int
 dpif_ubpf_destroy(struct dpif *dpif)
 {
     VLOG_INFO("Destroying uBPF");
+
     return 0;
 }
 
@@ -348,6 +354,26 @@ dp_prog_set(struct dpif *dpif, struct dpif_prog prog)
     return 0;
 }
 
+static void
+dp_prog_destroy_(struct dp_prog *prog)
+{
+    ubpf_destroy(prog->vm);
+    free(prog);
+}
+
+static void
+dp_prog_unset(struct dpif *dpif, uint32_t prog_id)
+{
+    struct dp_ubpf *dp = dpif_ubpf_cast(dpif)->dp;
+    VLOG_INFO("Removing BPF program ID=%d", prog_id);
+    if (!dp->prog) {
+        /* uBPF program is not installed. */
+        return;
+    }
+    dp_prog_destroy_(dp->prog);
+    VLOG_INFO("BPF program removed.");
+}
+
 const struct dpif_class dpif_ubpf_class = {
         "ubpf",
         true,
@@ -355,8 +381,8 @@ const struct dpif_class dpif_ubpf_class = {
         dpif_netdev_enumerate,
         dpif_netdev_port_open_type,
         dpif_ubpf_open,
-        dpif_netdev_close,
-        dpif_ubpf_destroy,
+        dpif_ubpf_close,
+        dpif_netdev_destroy,
         dpif_netdev_run,
         dpif_netdev_wait,
         dpif_netdev_get_stats,
@@ -422,6 +448,7 @@ const struct dpif_class dpif_ubpf_class = {
         NULL,
         NULL,
         dp_prog_set,
+        dp_prog_unset,
 };
 
 void

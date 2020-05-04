@@ -267,6 +267,9 @@ static size_t bridge_get_controllers(const struct bridge *br,
 static void bridge_collect_wanted_ports(struct bridge *,
                                         struct shash *wanted_ports);
 static void bridge_delete_ofprotos(void);
+static void bridge_delete_p4rts(void);
+static void bridge_delete_or_reconfigure_p4rt_program(struct bridge *br);
+static void bridge_delete_or_reconfigure_p4rt_ports(struct bridge *);
 static void bridge_delete_or_reconfigure_ports(struct bridge *);
 static void bridge_del_ports(struct bridge *,
                              const struct shash *wanted_ports);
@@ -832,9 +835,13 @@ static void
 bridge_configure_p4_datapath(struct bridge *br)
 {
     const char *program_path = smap_get(&br->cfg->other_config, "program");
-    if (program_path != NULL) {
-        p4rt_initialize_datapath(br->p4rt, program_path);
+    if (program_path == NULL) {
+        VLOG_WARN("bridge %s: P4 target binary not provided. "
+                  "Initializing P4 datapath with no P4 program!", br->name);
+        return;
     }
+
+    p4rt_initialize_datapath(br->p4rt, program_path);
 }
 
 static void
@@ -889,11 +896,24 @@ bridge_reconfigure(const struct ovsrec_open_vswitch *ovs_cfg)
      * the ports to be added might require resources that will be freed up by
      * deletions (they might especially overlap in name). */
     bridge_delete_ofprotos();
+    /*
+     * Do the same (above) for P4rt bridges, but delete P4 datapath's program first.
+     */
+//    HMAP_FOR_EACH (br, node, &all_bridges) {
+//        if (br->p4 && br->p4rt) {
+//            bridge_delete_or_reconfigure_p4rt_program(br);
+//        }
+//    }
+    bridge_delete_p4rts();
     HMAP_FOR_EACH (br, node, &all_bridges) {
         if (br->ofproto) {
             bridge_delete_or_reconfigure_ports(br);
+        } else if (br->p4rt) {
+            bridge_delete_or_reconfigure_p4rt_ports(br);
         }
     }
+
+
 
     /* Finish pushing configuration changes to the ofproto layer:
      *
@@ -1031,6 +1051,34 @@ bridge_delete_ofprotos(void)
     sset_destroy(&types);
 }
 
+static void
+bridge_delete_p4rts(void)
+{
+    struct bridge *br;
+    struct sset names;
+    struct sset types;
+    const char *type;
+
+    /* Delete p4rts with no bridge or with the wrong type. */
+    sset_init(&names);
+    sset_init(&types);
+
+    p4rt_enumerate_types(&types);
+    SSET_FOR_EACH (type, &types) {
+        const char *name;
+
+        p4rt_enumerate_names(type, &names);
+        SSET_FOR_EACH (name, &names) {
+            br = bridge_lookup(name);
+            if (!br || strcmp(type, br->type)) {
+                p4rt_delete(name, type);
+            }
+        }
+    }
+    sset_destroy(&names);
+    sset_destroy(&types);
+}
+
 static ofp_port_t *
 add_ofp_port(ofp_port_t port, ofp_port_t *ports, size_t *n, size_t *allocated)
 {
@@ -1057,6 +1105,56 @@ iface_set_netdev_mtu(const struct ovsrec_interface *iface_cfg,
     /* The user didn't explicitly asked for any MTU. */
     netdev_mtu_user_config(netdev, false);
     return 0;
+}
+
+static void
+bridge_delete_or_reconfigure_p4rt_program(struct bridge *br)
+{
+    struct p4rt *p4rt = br->p4rt;
+    /* We always remove P4 program. No reconfiguration. */
+    p4rt_prog_del(br->p4rt);
+}
+
+static void
+bridge_delete_or_reconfigure_p4rt_ports(struct bridge *br)
+{
+    struct port *port, *port_next;
+    struct p4rt *p4rt = br->p4rt;
+    const char *devname;
+
+    struct sset p4rt_ports;
+    sset_init(&p4rt_ports);
+    p4rt_get_ports(br->p4rt, &p4rt_ports);
+
+    SSET_FOR_EACH (devname, &p4rt_ports) {
+        struct iface *iface;
+        iface = iface_lookup(br, devname);
+        if (!iface) {
+            p4rt_port_del(br->p4rt, devname);
+            iface_destroy__(iface);
+        }
+    }
+    sset_destroy(&p4rt_ports);
+
+//    HMAP_FOR_EACH_SAFE (port, port_next, hmap_node, p4rt_get_ports(br->p4rt, &p4rt_ports)) {
+////        struct iface *iface, *iface_next;
+//        struct iface *iface;
+//        iface = iface_lookup(br, port->name);
+//        if (!iface) {
+//            ofp_port_t port_no = iface->ofp_port;
+//            iface_destroy__(iface);
+//            p4rt_port_del(br->p4rt, port_no);
+//        }
+//
+////        LIST_FOR_EACH_SAFE (iface, iface_next, port_elem, &port->ifaces) {
+////            iface_destroy__(iface);
+////            p4rt_port_del(br->p4rt, port_no);
+////        }
+////
+////        if (ovs_list_is_empty(&port->ifaces)) {
+////            port_destroy(port);
+////        }
+//    }
 }
 
 static void
@@ -1179,6 +1277,7 @@ bridge_delete_or_reconfigure_ports(struct bridge *br)
      *       whose module was just unloaded via "rmmod", or a virtual NIC for a
      *       VM whose VM was just terminated. */
     HMAP_FOR_EACH_SAFE (port, port_next, hmap_node, &br->ports) {
+
         struct iface *iface, *iface_next;
 
         LIST_FOR_EACH_SAFE (iface, iface_next, port_elem, &port->ifaces) {
@@ -2042,7 +2141,7 @@ add_del_bridges(const struct ovsrec_open_vswitch *cfg)
     HMAP_FOR_EACH_SAFE (br, next, node, &all_bridges) {
         br->cfg = shash_find_data(&new_br, br->name);
         if (!br->cfg || strcmp(br->type, ofproto_normalize_type(
-                                   br->cfg->datapath_type))) {
+                                   br->cfg->datapath_type)))  {
             bridge_destroy(br, true);
         }
     }

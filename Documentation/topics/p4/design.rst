@@ -52,3 +52,23 @@ So far, I take into account the two following datapaths:
 
 * **userspace Berkeley Packet Filter (uBPF)** -
 * **eXpress DataPath (XDP)** -
+
+---------
+Use cases
+---------
+
+Where do I see the application for a high-performance P4 software switch?
+
+* **Extensible, customizable hypervisor switch** -
+* **Data plane of VNFs** -
+* **Hybrid OpenFlow + P4Runtime deployments** - some open-source SDN controllers (e.g. ONOS) support both OpenFlow and P4Runtime.
+The OvS.p4 could be used in such a hybrid deployments.
+
+--------------
+Implementation
+--------------
+
+OvS.p4 is going to support at least three `netdev` providers:
+
+
+

@@ -427,6 +427,7 @@ int create_dp_netdev(const char *name, const struct dpif_class *class,
                  struct dp_netdev **dpp);
 void dp_netdev_free(struct dp_netdev *)
         OVS_REQUIRES(dp_netdev_mutex);
+int dpif_netdev_destroy(struct dpif *dpif);
 
 bool dpif_netdev_run(struct dpif *dpif);
 void dpif_netdev_close(struct dpif *dpif);

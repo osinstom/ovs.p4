@@ -619,6 +619,9 @@ struct dpif_class {
 
     /* Adds or modifies the data plane program in `dpif` */
     int (*dp_prog_set)(struct dpif *, struct dpif_prog prog);
+
+    /* Removes a data plane program `prog_id` from `dpif`. */
+    void (*dp_prog_unset)(struct dpif *, uint32_t prog_id);
 };
 
 extern const struct dpif_class dpif_netlink_class;
