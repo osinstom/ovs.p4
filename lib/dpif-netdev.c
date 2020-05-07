@@ -1171,11 +1171,11 @@ choose_port(struct dp_netdev *dp, const char *name)
 
 int
 create_dp_netdev(const char *name, const struct dpif_class *class,
-                 struct dp_netdev **dpp)
+                 struct dp_netdev *dp)
     OVS_REQUIRES(dp_netdev_mutex)
 {
     static struct ovsthread_once tsc_freq_check = OVSTHREAD_ONCE_INITIALIZER;
-    struct dp_netdev *dp;
+
     int error;
 
     /* Avoid estimating TSC frequency for dummy datapath to not slow down
@@ -1186,7 +1186,6 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
         ovsthread_once_done(&tsc_freq_check);
     }
 
-    dp = xzalloc(sizeof *dp);
     shash_add(&dp_netdevs, name, dp);
 
     *CONST_CAST(const struct dpif_class **, &dp->class) = class;
@@ -1243,7 +1242,6 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
     }
 
     dp->last_tnl_conf_seq = seq_read(tnl_conf_seq);
-    *dpp = dp;
     return 0;
 }
 
@@ -1269,7 +1267,8 @@ dpif_netdev_open(const struct dpif_class *class, const char *name,
     ovs_mutex_lock(&dp_netdev_mutex);
     dp = shash_find_data(&dp_netdevs, name);
     if (!dp) {
-        error = create ? create_dp_netdev(name, class, &dp) : ENODEV;
+        dp = xzalloc(sizeof *dp);
+        error = create ? create_dp_netdev(name, class, dp) : ENODEV;
     } else {
         error = (dp->class != class ? EINVAL
                  : create ? EEXIST

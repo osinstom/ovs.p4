@@ -12,9 +12,9 @@
 
 VLOG_DEFINE_THIS_MODULE(p4rt_dpif);
 
-//static const struct dpif_class *base_dpif_classes[] = {
-//        &dpif_ubpf_class,
-//};
+/* ## --------------------------------------- ## */
+/* ## p4rt-dpif helper structures definition. ## */
+/* ## --------------------------------------- ## */
 
 struct p4port_dpif {
     struct hmap_node hmap_node;
@@ -30,6 +30,10 @@ struct program_dpif {
     // TODO: other datapath-specific fields
 };
 
+/* ## ------------------------------------------ ## */
+/* ## Global (shared) objects used by p4rt-dpif. ## */
+/* ## ------------------------------------------ ## */
+
 static struct shash p4rt_dpif_classes = SHASH_INITIALIZER(&p4rt_dpif_classes);
 
 /* All existing p4rt instances, indexed by p4rt->up.type. */
@@ -37,6 +41,10 @@ struct shash all_p4rt_dpif_backers = SHASH_INITIALIZER(&all_p4rt_dpif_backers);
 
 /* Protects 'p4rt_dpif_classes'. */
 static struct ovs_mutex p4rt_dpif_mutex = OVS_MUTEX_INITIALIZER;
+
+/* ## --------------------------- ## */
+/* ## p4rt-dpif helper functions. ## */
+/* ## --------------------------- ## */
 
 static inline struct p4port_dpif *
 p4port_dpif_cast(const struct p4port *p4port)
@@ -51,7 +59,6 @@ ofp_port_to_p4port(const struct p4rt_dpif *p4rt, ofp_port_t ofp_port)
     return p4port ? p4port_dpif_cast(p4port) : NULL;
 }
 
-
 static inline struct p4rt_dpif *
 p4rt_dpif_cast(const struct p4rt *p4rt)
 {
@@ -64,6 +71,8 @@ p4program_dpif_cast(const struct program *prog)
 {
     return CONTAINER_OF(prog, struct program_dpif, up);
 }
+
+
 
 static void
 dp_initialize(void)
@@ -92,7 +101,8 @@ p4rt_dpif_port_open_type(const char *datapath_type, const char *port_type)
 static void
 p4rt_dpif_enumerate_types(struct sset *types)
 {
-    dp_enumerate_types(types);
+    /* Return only ubpf as a proper type for P4 datapath */
+    sset_add(types, "ubpf");
 }
 
 static int
@@ -231,8 +241,6 @@ static void
 p4rt_dpif_destruct(struct p4rt *p4rt_, bool del)
 {
     struct p4rt_dpif *p4rt = p4rt_dpif_cast(p4rt_);
-
-
 
     close_p4rt_dpif_backer(p4rt->backer, del);
 }

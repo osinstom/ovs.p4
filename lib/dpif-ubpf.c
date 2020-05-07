@@ -48,6 +48,12 @@ struct dp_ubpf {
     struct dp_prog *prog;
 };
 
+/* Interface to ubpf-based datapath. */
+struct dpif_ubpf {
+    struct dpif_netdev dpif_netdev;
+    struct dp_ubpf *dp;
+};
+
 static void dp_prog_destroy_(struct dp_prog *prog);
 
 static struct dp_ubpf *
@@ -55,12 +61,6 @@ dp_ubpf_cast(struct dp_netdev *dp_netdev)
 {
     return CONTAINER_OF(dp_netdev, struct dp_ubpf, dp_netdev);
 }
-
-/* Interface to ubpf-based datapath. */
-struct dpif_ubpf {
-    struct dpif_netdev dpif_netdev;
-    struct dp_ubpf *dp;
-};
 
 static struct dpif_ubpf *
 dpif_ubpf_cast(const struct dpif *dpif)
@@ -165,10 +165,8 @@ protocol_independent_processing(struct dp_netdev_pmd_thread *pmd,
                 };
 
                 ubpf_handle_packet(dp->prog->vm, &std_meta, packet);
-//            VLOG_INFO("From uBPF, action = %d", std_meta.output_action);
                 switch (std_meta.output_action) {
                     case REDIRECT: {
-//                    VLOG_INFO("Action Redirect, port = %d", std_meta.output_port);
                         uint32_t hash = hash_2words(std_meta.output_action,
                                                     std_meta.output_port);
 
@@ -205,9 +203,9 @@ process_ubpf(struct dp_netdev_pmd_thread *pmd,
 static int
 dpif_ubpf_init(void)
 {
-    // Some uBPF specific objects may be initialized here.
+    /* Some uBPF specific objects may be initialized here. */
 
-    // initialize dpif-netdev too.
+    /* initialize dpif-netdev too. */
     dpif_netdev_init();
     VLOG_INFO("uBPF datapath initialized");
     return 0;
@@ -217,7 +215,6 @@ static struct dpif *
 create_dpif_ubpf(struct dp_ubpf *dp)
 {
     struct dpif_ubpf *dpif;
-//    ovs_refcount_ref(&dp->ref_cnt);
 
     struct dpif *dpifp = create_dpif_netdev(&dp->dp_netdev);
     dpif = xrealloc(dpifp, sizeof(struct dpif_ubpf));
@@ -229,22 +226,16 @@ create_dpif_ubpf(struct dp_ubpf *dp)
 static int
 create_dp_ubpf(const char *name, const struct dpif_class *class,
         struct dp_ubpf **dpp)
-//    OVS_REQUIRES(dp_ubpf_mutex)
 {
     VLOG_INFO("Create dp ubpf");
     struct dp_ubpf *dp;
 
-    struct dp_netdev *dp_netdev;
-    int error = create_dp_netdev(name, class, &dp_netdev);
+    dp = xzalloc(sizeof *dp);
+
+    int error = create_dp_netdev(name, class, &dp->dp_netdev);
     if (error) {
         VLOG_INFO("Error creating dp netdev");
         return error;
-    }
-
-    dp = xrealloc(dp_netdev, sizeof(struct dp_ubpf));
-    if (dp == NULL) {
-        dp_netdev_free(dp_netdev);
-        return ENOMEM;
     }
 
     dp->dp_netdev.process_cb = process_ubpf;
@@ -253,8 +244,6 @@ create_dp_ubpf(const char *name, const struct dpif_class *class,
 
     *CONST_CAST(const char **, &dp->name) = xstrdup(name);
     dp->prog = NULL;
-
-//    ovs_refcount_init(&dp->ref_cnt);
 
     *dpp = dp;
     return 0;

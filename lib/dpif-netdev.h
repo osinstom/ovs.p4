@@ -424,7 +424,7 @@ void dpif_netdev_wait(struct dpif *dpif);
 const char  *dpif_netdev_port_open_type(const struct dpif_class *class, const char *type);
 struct dpif *create_dpif_netdev(struct dp_netdev *dp);
 int create_dp_netdev(const char *name, const struct dpif_class *class,
-                 struct dp_netdev **dpp);
+                 struct dp_netdev *dp);
 void dp_netdev_free(struct dp_netdev *)
         OVS_REQUIRES(dp_netdev_mutex);
 int dpif_netdev_destroy(struct dpif *dpif);
