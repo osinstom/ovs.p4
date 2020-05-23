@@ -53,8 +53,3 @@ matrix:
       env: OPTS="--disable-ssl"
 
 script: ./.travis/${TRAVIS_OS_NAME}-build.sh $OPTS
-
-notifications:
-  email:
-    recipients:
-      - ovs-build@openvswitch.org
